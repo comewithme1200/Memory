@@ -2212,6 +2212,33 @@ a {
   text-align: center;
 }
 
+/* Tuỳ chọn của món trong bảng "Món cần làm".
+   Bếp cần thấy rõ phần nào là size to, phần nào là thường -> hiện dạng
+   chip nhỏ ngay dưới tên món, nổi bật hơn dòng chữ nhỏ. */
+.kitchen-opts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+  margin-top: 4px;
+}
+
+.kitchen-opt {
+  display: inline-block;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: var(--brand-soft);
+  border: 1px solid #f3c98b;
+  color: var(--brand-dark);
+  font-size: 12px;
+  font-weight: 700;
+  line-height: 1.5;
+}
+
+.kitchen-opt em {
+  font-style: normal;
+  opacity: 0.85;
+}
+
 /* ==================================================================== *
  * 📱 GIAO DIỆN ĐIỆN THOẠI CHO TRANG QUẢN TRỊ
  *

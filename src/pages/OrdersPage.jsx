@@ -104,21 +104,49 @@ export default function OrdersPage() {
 
   /**
    * "🔥 Món cần làm" — gom tất cả món của các đơn CHƯA XONG
-   * (đang `new` hoặc `preparing`) theo tên món, cộng dồn số lượng.
+   * (đang `new` hoặc `preparing`) theo tên món + TUỲ CHỌN, cộng dồn số lượng.
    *
    * Đơn nào chuyển sang `done`/`cancelled` -> tự động biến mất khỏi bảng
    * (vì danh sách được tính lại mỗi lần reload). Không cần thao tác thủ công.
+   *
+   * ---------------------------------------------------------------------------
+   * VÌ SAO PHẢI TÁCH THEO TUỲ CHỌN?
+   *
+   * Ví dụ khách gọi "7 hộp xôi siêu to (30k)" và "3 hộp xôi thường (20k)".
+   * Nếu gom chỉ theo id món thì cả 10 hộp bị gộp thành 1 dòng và bếp tưởng
+   * phải làm 10 hộp SIÊU TO -> sai, thiếu hàng.
+   *
+   * Vì vậy khoá gom là (món + tập tuỳ chọn đã chọn), và giá hiển thị là
+   * giá CUỐI CÙNG (giá món + tổng price_delta của các tuỳ chọn).
+   * ---------------------------------------------------------------------------
    */
   const kitchen = useMemo(() => {
     const map = new Map()
     for (const o of orders) {
       if (o.status !== 'new' && o.status !== 'preparing') continue
       for (const it of o.items || []) {
-        const key = it.id || it.name
+        // Danh sách tuỳ chọn, SẮP XẾP THEO TÊN để thứ tự chọn không ảnh
+        // hưởng tới khoá gom (cùng 1 món, cùng 1 bộ tuỳ chọn -> 1 dòng).
+        const opts = (it.options || [])
+          .map((o) => ({
+            name: o.name || '',
+            delta: Math.round(Number(o.price_delta) || 0),
+          }))
+          .sort((a, b) => a.name.localeCompare(b.name))
+
+        // Khoá gom: id món + tên các tuỳ chọn (giá delta đi kèm để phân biệt
+        // 2 món cùng tên nhưng khác giá).
+        const key = `${it.id || it.name}::${opts.map((o) => `${o.name}|${o.delta}`).join(',')}`
+
         const row = map.get(key) || {
-          id: key,
+          key,
           name: it.name,
+          // `it.price` đã là GIÁ CUỐI (giá món + tổng price_delta tuỳ chọn).
+          // Server chốt sẵn khi tạo đơn: `price_snapshot = m.price + SUM(price_delta)`
+          // (xem RPC create_order). Vì vậy KHÔNG cộng thêm delta ở đây,
+          // nếu không sẽ cộng 2 lần.
           price: Number(it.price) || 0,
+          options: opts,
           qty: 0,
           notes: [],
           orders: [],
@@ -156,9 +184,10 @@ export default function OrdersPage() {
       {/* ---- 🔥 MÓN CẦN LÀM — gom tất cả món của đơn chưa xong ---- */}
       {kitchen.length > 0 && (
         <section className="panel kitchen-panel">
-          <h2 className="panel-title">🔥 Món cần làm ({kitchen.length} loại)</h2>
+          <h2 className="panel-title">🔥 Món cần làm ({kitchen.length} món)</h2>
           <p className="panel-hint">
-            Tổng hợp món của tất cả đơn chưa hoàn thành. Bấm nút Xong ở đơn bên dưới thì món tương
+            Tổng hợp món của tất cả đơn chưa hoàn thành, đã tách theo tuỳ chọn (vd xôi
+            siêu to và xôi thường là 2 dòng riêng). Bấm nút Xong ở đơn bên dưới thì món tương
             ứng tự trừ khỏi bảng này.
           </p>
           <div className="table-wrap">
@@ -172,10 +201,26 @@ export default function OrdersPage() {
               </thead>
               <tbody>
                 {kitchen.map((row) => (
-                  <tr key={row.id}>
+                  <tr key={row.key}>
                     <td className="td-title">
                       <strong>{row.name}</strong>
                       <span className="muted small"> · {fmtVND(row.price)}</span>
+                      {row.options.length > 0 && (
+                        <div className="kitchen-opts">
+                          {row.options.map((o, k) => (
+                            <span key={k} className="kitchen-opt">
+                              + {o.name}
+                              {o.delta !== 0 && (
+                                <em className={o.delta < 0 ? 'opt-minus' : ''}>
+                                  {' '}
+                                  {o.delta > 0 ? '+' : '−'}
+                                  {fmtVND(Math.abs(o.delta))}
+                                </em>
+                              )}
+                            </span>
+                          ))}
+                        </div>
+                      )}
                       {row.notes.length > 0 && (
                         <div className="muted small">
                           📝 {row.notes.join(' · ')}
