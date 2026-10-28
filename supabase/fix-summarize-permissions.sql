@@ -21,14 +21,37 @@
 -- =====================================================================
 
 -- Gỡ quyền khỏi mọi role (kể cả anon)
-revoke all on function public.summarize_orders(timestamptz, timestamptz) from public;
-revoke all on function public.summarize_orders(timestamptz, timestamptz) from anon;
-revoke all on function public.summarize_orders() from public;
-revoke all on function public.summarize_orders() from anon;
-
--- Chỉ chủ quán (đã đăng nhập) được gọi
-grant execute on function public.summarize_orders(timestamptz, timestamptz) to authenticated;
-grant execute on function public.summarize_orders() to authenticated;
+--
+-- ⚠️ VÌ SAO DÙNG `DO` BLOCK?
+--
+-- PostgreSQL KHÔNG tạo hàm overload 0-tham-số cho các tham số có `default`.
+-- `create function summarize_orders(p_from timestamptz default null, p_to timestamptz default null)`
+-- tạo ra ĐÚNG MỘT hàm với 2 tham số. Do đó câu lệnh:
+--
+--     revoke all on function public.summarize_orders() from public;
+--
+-- sẽ báo lỗi "function public.summarize_orders() does not exist" — và vì
+-- Supabase chạy file trong 1 transaction, lỗi đó làm HỎNG CẢ FILE:
+-- các câu lệnh phía sau không được chạy. Đó là lý do file này trước đây
+-- chạy mà không có tác dụng gì.
+--
+-- `DO` block duyệt `pg_proc` nên chạy được với mọi hình dạng hàm.
+do $$
+declare
+  r record;
+begin
+  for r in
+    select p.oid
+    from pg_proc p
+    join pg_namespace n on n.oid = p.pronamespace
+    where n.nspname = 'public'
+      and p.proname = 'summarize_orders'
+  loop
+    execute format('revoke all on function %s from public', r.oid::regprocedure);
+    execute format('revoke all on function %s from anon', r.oid::regprocedure);
+    execute format('grant execute on function %s to authenticated', r.oid::regprocedure);
+  end loop;
+end $$;
 
 -- ---------------------------------------------------------------------
 -- Kiểm tra nhanh (chạy trong SQL Editor)

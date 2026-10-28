@@ -124,13 +124,41 @@ grant execute on function public.customer_by_token(text) to anon, authenticated;
 -- 5) Sửa lỗ hổng: gỡ quyền xem doanh thu cho khách
 -- ---------------------------------------------------------------------
 -- `revoke ... from public` KHÔNG đủ vì `anon` là thành viên của `public`.
--- Phải revoke cho `anon` riêng, và cả overload 0 tham số.
-revoke all on function public.summarize_orders(timestamptz, timestamptz) from public;
-revoke all on function public.summarize_orders(timestamptz, timestamptz) from anon;
-revoke all on function public.summarize_orders() from public;
-revoke all on function public.summarize_orders() from anon;
-grant execute on function public.summarize_orders(timestamptz, timestamptz) to authenticated;
-grant execute on function public.summarize_orders() to authenticated;
+-- Phải revoke cho `anon` riêng.
+--
+-- ⚠️ VÌ SAO DÙNG `DO` BLOCK THAY VÌ VIẾT THẲNG `revoke`?
+--
+-- PostgreSQL KHÔNG tạo hàm overload 0-tham-số cho các tham số có `default`.
+-- `create function summarize_orders(p_from timestamptz default null, p_to timestamptz default null)`
+-- tạo ra ĐÚNG MỘT hàm với 2 tham số. Do đó câu lệnh:
+--
+--     revoke all on function public.summarize_orders() from public;
+--
+-- sẽ báo lỗi "function public.summarize_orders() does not exist".
+--
+-- Và ĐÓNG TOÀN BỘ SCRIPT (Supabase chạy file trong 1 transaction) — các câu
+-- lệnh phía sau sẽ KHÔNG được chạy. Đây chính là lý do
+-- `fix-summarize-permissions.sql` trước đây chạy mà không có tác dụng:
+-- lỗi xảy ra ở dòng `revoke ... summarize_orders()` làm hỏng cả file.
+--
+-- `DO` block duyệt qua `pg_proc` nên chạy được với MỌI hình dạng hàm,
+-- không sợ lỗi "does not exist".
+do $$
+declare
+  r record;
+begin
+  for r in
+    select p.oid
+    from pg_proc p
+    join pg_namespace n on n.oid = p.pronamespace
+    where n.nspname = 'public'
+      and p.proname = 'summarize_orders'
+  loop
+    execute format('revoke all on function %s from public', r.oid::regprocedure);
+    execute format('revoke all on function %s from anon', r.oid::regprocedure);
+    execute format('grant execute on function %s to authenticated', r.oid::regprocedure);
+  end loop;
+end $$;
 
 -- ---------------------------------------------------------------------
 -- 6) RPC create_order — thêm địa chỉ + nhận token khách quen
@@ -271,11 +299,25 @@ begin
 end;
 $$;
 
-revoke all on function public.create_order(text, text, text, text, text, text, jsonb, text) from public;
-revoke all on function public.create_order(text, text, text, text, text, text, jsonb, text) from anon;
-revoke all on function public.create_order() from public;
-grant execute on function public.create_order(text, text, text, text, text, text, jsonb, text) to anon, authenticated;
-grant execute on function public.create_order() to anon, authenticated;
+-- Quyền gọi hàm: khách (anon) VÀ chủ quán đều được đặt đơn.
+-- Dùng `DO` block để không lỗi "does not exist" với bất kỳ hình dạng hàm nào
+-- (xem giải thích ở mục 5 ở trên).
+do $$
+declare
+  r record;
+begin
+  for r in
+    select p.oid
+    from pg_proc p
+    join pg_namespace n on n.oid = p.pronamespace
+    where n.nspname = 'public'
+      and p.proname = 'create_order'
+  loop
+    execute format('revoke all on function %s from public', r.oid::regprocedure);
+    execute format('revoke all on function %s from anon', r.oid::regprocedure);
+    execute format('grant execute on function %s to anon, authenticated', r.oid::regprocedure);
+  end loop;
+end $$;
 
 -- ---------------------------------------------------------------------
 -- 7) Kiểm tra sau khi chạy
