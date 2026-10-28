@@ -9,12 +9,17 @@
     <meta name="theme-color" content="#e8590c" />
     <meta name="description" content="Đặt món ăn sáng nhanh — xem thực đơn, chọn món, bếp nhận đơn ngay." />
     <title>Quán Ăn Sáng — Đặt món</title>
-    <script type="module" crossorigin src="./assets/index-BIpipeGA.js"></script>
-    <link rel="stylesheet" crossorigin href="./assets/index-Ke5fduFw.css">
+    <script type="module" crossorigin src="./assets/index-9t6wytux.js"></script>
+    <link rel="stylesheet" crossorigin href="./assets/index-Dlj5n0Ed.css">
   </head>
   <body>
     <div id="root"></div>
     <!-- Khu vực duy nhất được in ra giấy (máy in nhiệt 80mm) -->
-    <div id="print-area"></div>
+    <div id="print-area"></div>
+    <!-- Khu vực in mã QR khách quen.
+         Nằm ở cấp <body> (không phải trong modal) vì CSS in dùng
+         `body > *:not(#qr-print-area) { display:none }` để ẩn giao diện —
+         nếu ảnh QR nằm sâu trong modal thì nó cũng bị ẩn theo. -->
+    <div id="qr-print-area"></div>
   </body>
 </html>
