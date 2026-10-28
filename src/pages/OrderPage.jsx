@@ -522,7 +522,10 @@ function DishCard({ item, qty, groups, onAdd, onRemove, onSetQty }) {
             {qty > 0 ? (
               <QtyInput value={qty} name={item.name} onCommit={onSetQty} />
             ) : (
-              <span className="qty-empty">0</span>
+              /* Chừa chỗ trống để "+ Thêm" không bị nhảy khi món có trong giỏ.
+                 Trước đây hiện số "0" ở đây -> gây rối mắt, KHÔNG mang
+                 thông tin gì (món chưa chọn thì qty luôn = 0). */
+              <span className="qty-empty" aria-hidden="true" />
             )}
             <button
               className="btn-step btn-add"
@@ -806,7 +809,6 @@ function CartBar({
                 <textarea
                   value={note}
                   onChange={(e) => setNote(e.target.value)}
-                  placeholder="Ít cay, thêm nước sốt..."
                   rows={2}
                 />
               </div>

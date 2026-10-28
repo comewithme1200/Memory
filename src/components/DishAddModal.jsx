@@ -136,7 +136,6 @@ export default function DishAddModal({ item, groups = [], initial, onCancel, onC
             <textarea
               value={note}
               onChange={(e) => setNote(e.target.value)}
-              placeholder="Ít cay, không hành, thêm ớt riêng..."
               rows={2}
               maxLength={200}
             />

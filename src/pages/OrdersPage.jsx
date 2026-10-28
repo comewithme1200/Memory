@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { flushSync } from 'react-dom'
 import { listOrders, updateOrderStatus, deleteOrder, updateOrderPayment } from '../lib/db.js'
 import { fmtVND, fmtTime } from '../lib/format.js'
 import Invoice from '../components/Invoice.jsx'
@@ -58,7 +59,16 @@ export default function OrdersPage() {
       if (status === 'done') {
         const full = list.find((o) => o.id === id)
         if (full) {
-          setPrinting(full)
+          // `flushSync` ép React render NGAY TRONG cú bấm (đồng bộ).
+          //
+          // LÝ DO: trên điện thoại, `window.print()` chỉ mở được khi được gọi
+          // trong "user gesture" (ngay khi người dùng bấm). Nếu để React render
+          // bằng setState bình thường, việc render + effect (gọi print()) xảy
+          // ra ở task SAU -> mất user gesture -> iOS Safari chặn im lặng ->
+          // bấm nút "In hoá đơn" không ra gì cả.
+          flushSync(() => {
+            setPrinting(full)
+          })
         } else {
           setError('Không tìm thấy đơn để in. Hãy bấm "In lại" trong danh sách.')
         }

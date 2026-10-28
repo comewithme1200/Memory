@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 import QRCode from 'qrcode'
+import QrPrintPortal from '../components/QrPrintPortal.jsx'
 import {
   listCustomers,
   createCustomer,
@@ -77,20 +78,13 @@ export default function CustomersPage() {
   /**
    * In mã QR.
    *
-   * Thêm class `printing-qr` vào <body> để CSS `@media print` chỉ hiện mã QR.
-   * Class được gỡ sau khi in xong (dùng cả `afterprint` lẫn timeout dự phòng).
+   * Việc render ảnh và gọi `window.print()` do `QrPrintPortal` đảm nhiệm —
+   * ảnh QR được đưa ra `#qr-print-area` ở cấp <body> để CSS in ẩn sạch
+   * giao diện admin mà không ẩn mất chính mã QR.
    */
-  const printQr = () => {
-    document.body.classList.add('printing-qr')
-    const cleanup = () => {
-      document.body.classList.remove('printing-qr')
-      window.removeEventListener('afterprint', cleanup)
-    }
-    window.addEventListener('afterprint', cleanup)
-    window.print()
-    // Safari/Chrome có thể không bắn 'afterprint' -> dọn sau 1s.
-    setTimeout(cleanup, 1000)
-  }
+  const [printingQr, setPrintingQr] = useState(false)
+
+  const printQr = () => setPrintingQr(true)
 
   const reload = () =>
     listCustomers()
@@ -343,7 +337,6 @@ export default function CustomersPage() {
               {qrDataUrl ? (
                 <>
                   <img
-                    id="qr-print-area"
                     className="qr-image"
                     src={qrDataUrl}
                     alt={`Mã QR của ${qrFor.name}`}
@@ -388,6 +381,15 @@ export default function CustomersPage() {
             </div>
           </div>
         </div>
+      )}
+
+      {/* In mã QR — ảnh được đưa ra #qr-print-area ở cấp <body> */}
+      {printingQr && qrDataUrl && (
+        <QrPrintPortal
+          dataUrl={qrDataUrl}
+          name={qrFor?.name}
+          onPrinted={() => setPrintingQr(false)}
+        />
       )}
     </>
   )

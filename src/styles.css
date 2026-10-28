@@ -749,7 +749,7 @@ a {
   box-shadow: 0 0 0 3px var(--brand-soft);
 }
 
-/* Số 0 mờ khi món chưa có trong giỏ */
+/* Chỗ trống giữ chỗ khi món chưa có trong giỏ (trước đây hiện số "0") */
 .qty-empty {
   min-width: 58px;
   text-align: center;
@@ -1268,6 +1268,17 @@ a {
   color: var(--ink-2);
   line-height: 1.6;
   margin: 14px 0 10px;
+}
+
+/* Vùng chứa ảnh QR khi IN (ở cấp <body>).
+   Ngoài lúc in thì phải ẨN hoàn toàn, nếu không người dùng sẽ thấy
+   1 bản QR trống lơ lửng ở cuối trang. */
+#qr-print-area {
+  display: none;
+}
+
+.qr-print-inner {
+  text-align: center;
 }
 
 .qr-meta {
@@ -1941,20 +1952,20 @@ a {
 
 /* ------------------------------ PRINT ------------------------------- */
 
+/* Chỉ ẩn giao diện khi ĐANG in hoá đơn (PrintPortal gắn class lên <body>).
+   Nếu ẩn luôn khi không in, người dùng bấm Ctrl+P ở trang thường sẽ ra
+   trang trắng trơn. */
 @media print {
-  body * {
-    visibility: hidden;
+  /* Ẩn hẳn giao diện (display:none) thay vì `visibility:hidden`.
+     `visibility` vẫn GIỮ CHIỀU CAO của phần tử -> trình duyệt in ra nhiều
+     trang trống phía trên hoá đơn, đặc biệt rõ trên điện thoại. */
+  body.printing-invoice > *:not(#print-area) {
+    display: none !important;
   }
 
-  #print-area,
-  #print-area * {
-    visibility: visible;
-  }
-
-  #print-area {
-    position: absolute;
-    left: 0;
-    top: 0;
+  body.printing-invoice #print-area {
+    display: block !important;
+    position: static;
     width: 100%;
   }
 
@@ -1980,32 +1991,34 @@ a {
 
 /* ------------------------------ PRINT QR --------------------------- */
 /* In mã QR khách quen: chỉ in mã + tên, không in giao diện admin.
-   Dùng class `printing-qr` trên <body> để không đụng vào style in hoá đơn. */
+   Dùng class `printing-qr` trên <body> để không đụng vào style in hoá đơn.
+   Ảnh QR nằm trong `#qr-print-area` ở cấp <body> (xem QrPrintPortal). */
 @media print {
-  body.printing-qr * {
-    visibility: hidden;
-  }
-
-  body.printing-qr #qr-print-area,
-  body.printing-qr #qr-print-area * {
-    visibility: visible;
+  body.printing-qr > *:not(#qr-print-area) {
+    display: none !important;
   }
 
   body.printing-qr #qr-print-area {
-    position: absolute;
-    left: 0;
-    top: 0;
+    display: block !important;
+    position: static;
     width: 100%;
     text-align: center;
   }
 
-  body.printing-qr #qr-print-area.qr-image {
+  /* Ảnh QR: bỏ viền bo góc, kích thước cố định cho máy in nhiệt. */
+  body.printing-qr #qr-print-area .qr-image {
     border: none;
     border-radius: 0;
     padding: 0;
     max-width: 10cm;
     width: 10cm;
     image-rendering: pixelated;
+  }
+
+  body.printing-qr #qr-print-area .qr-name {
+    margin-top: 4mm;
+    font-size: 14pt;
+    font-weight: 700;
   }
 
   @page {
