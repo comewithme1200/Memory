@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
 import { listMenu, listAllItemOptions, createOrder, getCustomerByToken } from '../lib/db.js'
 import { fmtVND, uid } from '../lib/format.js'
-import DishOptions from '../components/DishOptions.jsx'
+import DishAddModal from '../components/DishAddModal.jsx'
 
 const CART_KEY = 'quan-an-sang:cart:v2'
 
@@ -32,15 +32,15 @@ const QTY_WARN_THRESHOLD = 16
  *     ...
  *   ]
  *
- * Hai dòng CHỈ GỘP lại với nhau khi: cùng món, cùng bộ tuỳ chọn, và không
- * có ghi chú. Nếu khách chọn "Size to" và "Size nhỏ" thì đó là 2 dòng
- * riêng biệt (giá khác nhau).
+ * MỖI LẦN BẤM "+ Thêm" TẠO MỘT DÒNG RIÊNG (kiểu GrabFood).
+ * Không gộp dòng nào cả — kể cả khi khách chọn y hệt nhau. Nhờ vậy
+ * mỗi dòng có ghi chú + options riêng, không cần nút "Tách riêng".
  *
  * Dữ liệu cũ (trước đây lưu dạng object { [id_món]: { qty, note } })
  * vẫn đọc được nhờ hàm chuẩn hoá bên dưới.
  * ------------------------------------------------------------------ */
 
-/** Khoá so sánh 2 bộ tuỳ chọn (để biết 2 dòng có gộp được không). */
+/** Khoá so sánh 2 bộ tuỳ chọn (dùng để so sánh nhanh 2 dòng trong giỏ). */
 const optionsKey = (options) =>
   (options || [])
     .map((o) => o.id)
@@ -113,6 +113,12 @@ export default function OrderPage() {
   const [cart, setCart] = useState(loadCart)
   const [activeCat, setActiveCat] = useState('all')
 
+  // ---- MODAL THÊM MÓN (kiểu GrabFood) --------------------------------
+  // `addModal` = { mode: 'add' | 'edit', item, lineKey }
+  //   mode 'add' -> thêm món mới vào giỏ
+  //   mode 'edit'-> sửa options/ghi chú của 1 dòng đã có trong giỏ
+  const [addModal, setAddModal] = useState(null)
+
   // ---- Khách quen đến từ QR ---------------------------------------
   // Token nằm trong query của HashRouter: `#/?qr=<token>`.
   // Khi có token hợp lệ -> lấy tên/SĐT/địa chỉ từ DB rồi điền sẵn vào form.
@@ -168,35 +174,54 @@ export default function OrderPage() {
   }
 
   /**
-   * Thêm món vào giỏ.
+   * Thêm món vào giỏ — LUÔN tạo dòng MỚI (kiểu GrabFood).
    *
-   * - Nếu đã có dòng CÙNG MÓN + CÙNG BỘ TUỲ CHỌN + không ghi chú
-   *   -> tăng số lượng dòng đó (mua 2 phần giống hệt nhau -> gộp 1 dòng).
-   * - Ngược lại -> tạo dòng MỚI ở cuối, để khách ghi chú riêng.
+   * Không gộp với dòng cũ, dù khách chọn y hệt. Mỗi lần bấm "+ Thêm" là
+   * 1 dòng riêng -> mỗi dòng có ghi chú + options riêng của nó.
    */
-  const addToCart = (itemId, options = []) => {
-    const optKey = optionsKey(options)
-    update((prev) => {
-      const idx = prev.findIndex(
-        (v) => v.itemId === itemId && !v.note.trim() && optionsKey(v.options) === optKey,
-      )
-      if (idx >= 0) {
-        const next = [...prev]
-        next[idx] = { ...next[idx], qty: next[idx].qty + 1 }
-        return next
-      }
-      return [...prev, { key: uid(), itemId, qty: 1, note: '', options }]
-    })
+  const addToCart = (itemId, options = [], note = '', qty = 1) => {
+    const n = Math.max(1, Math.floor(Number(qty) || 1))
+    update((prev) => [...prev, { key: uid(), itemId, qty: n, note, options }])
   }
 
   /**
-   * ĐẶT SỐ LƯỢNG cho 1 MÓN (dùng ở thẻ món ngoài trang thực đơn).
+   * Xác nhận modal thêm món.
+   * - mode 'add' -> thêm dòng MỚI vào giỏ.
+   * - mode 'edit'-> sửa dòng đang có trong giỏ (options/ghi chú/số lượng).
+   */
+  const confirmAdd = ({ options, note, qty }) => {
+    if (!addModal) return
+    if (addModal.mode === 'edit') {
+      update((prev) => {
+        const idx = prev.findIndex((v) => v.key === addModal.lineKey)
+        if (idx < 0) return prev
+        const next = [...prev]
+        next[idx] = {
+          ...next[idx],
+          qty: Math.max(1, Math.floor(Number(qty) || 1)),
+          note,
+          options,
+        }
+        return next
+      })
+    } else {
+      addToCart(addModal.item.id, options, note, qty)
+    }
+    setAddModal(null)
+  }
+
+  /**
+   * ĐẶT SỐ LƯỢNG cho 1 MÓN (từ ô input trên thẻ món).
    *
-   * Món có thể nằm ở nhiều dòng (do đã tách riêng). Khi khách nhập số N:
-   *   - N <= 0  -> bỏ hết món đó khỏi giỏ.
-   *   - N > 0   -> gộp: đặt dòng ĐẦU TIÊN của món đó thành N, và xoá các
-   *                dòng còn lại của món đó (ghi chú của dòng đầu được giữ).
-   *                -> tổng số lượng của món luôn đúng bằng N.
+   * Món có thể nằm ở nhiều dòng (mỗi dòng 1 bộ options/ghi chú riêng).
+   * Nên KHÔNG gộp các dòng lại — làm vậy sẽ mất options của dòng bị xoá.
+   * Thay vào đó:
+   *   - TĂNG số lượng -> cộng thêm vào dòng CUỐI CÙNG (giữ nguyên options).
+   *   - GIẢM số lượng -> bớt dần từ dòng cuối về đầu; dòng nào về 0 thì
+   *     xoá hẳn dòng đó.
+   *   - N <= 0 -> xoá hết các dòng của món đó.
+   *
+   * Tổng số phần của món luôn đúng bằng N, và không mất tuỳ chọn nào.
    */
   const setQtyOfItem = (itemId, rawValue) => {
     const n = Math.floor(Number(rawValue))
@@ -207,16 +232,36 @@ export default function OrderPage() {
       if (idxs.length === 0) return prev
 
       const next = [...prev]
+      const current = idxs.reduce((s, i) => s + next[i].qty, 0)
 
       if (n <= 0) {
         for (const i of idxs.reverse()) next.splice(i, 1)
         return next
       }
 
-      // Giữ dòng đầu tiên, đặt qty = n, gộp các dòng còn lại vào đó
-      const first = idxs[0]
-      next[first] = { ...next[first], qty: n }
-      for (const i of idxs.slice(1).reverse()) next.splice(i, 1)
+      const diff = n - current
+      if (diff === 0) return prev
+
+      if (diff > 0) {
+        // Cộng thêm vào dòng cuối cùng -> giữ nguyên options của dòng đó
+        const last = idxs[idxs.length - 1]
+        next[last] = { ...next[last], qty: next[last].qty + diff }
+        return next
+      }
+
+      // Giảm: bớt từ dòng cuối về đầu
+      let need = -diff
+      for (const i of idxs.slice().reverse()) {
+        if (need <= 0) break
+        const q = next[i].qty
+        if (q <= need) {
+          need -= q
+          next.splice(i, 1)
+        } else {
+          next[i] = { ...next[i], qty: q - need }
+          need = 0
+        }
+      }
       return next
     })
   }
@@ -292,47 +337,14 @@ export default function OrderPage() {
     })
   }
 
-  // Ghi chú riêng cho từng DÒNG (vd "không da gà, thêm ớt")
-  const setNote = (lineKey, note) => {
-    update((prev) => {
-      const idx = prev.findIndex((v) => v.key === lineKey)
-      if (idx < 0) return prev
-      const next = [...prev]
-      next[idx] = { ...next[idx], note }
-      return next
-    })
-  }
-
   /**
-   * "Tách riêng" — tách 1 phần từ dòng này ra thành dòng MỚI ngay BÊN DƯỚI,
-   * để khách ghi chú khác.
+   * "Tách riêng" — KHÔNG CÒN DÙNG nữa.
    *
-   * CHỈ tách được khi dòng có qty > 1:
-   * - qty > 1: bớt 1 phần khỏi dòng này, tạo dòng mới qty = 1 ngay bên dưới
-   *            (tổng số phần KHÔNG đổi — đúng nghĩa "tách").
-   * - qty = 1: không còn phần nào để tách -> KHÔNG làm gì. Muốn mua thêm 1 phần
-   *            cùng món thì bấm "+" (nút Thêm), dòng mới sẽ tự tách ra.
+   * Mỗi lần bấm "+ Thêm" giờ đã tạo 1 dòng riêng (kiểu GrabFood) nên khách
+   * không cần tách thủ công. Hàm này giữ lại để dữ liệu cũ trong localStorage
+   * không bị hỏng, nhưng không được gọi từ giao diện.
    */
-  const splitLine = (lineKey) => {
-    update((prev) => {
-      const idx = prev.findIndex((v) => v.key === lineKey)
-      if (idx < 0) return prev
-      const cur = prev[idx]
-      if (cur.qty <= 1) return prev // qty = 1: không có phần nào để tách
-
-      const next = [...prev]
-      next[idx] = { ...cur, qty: cur.qty - 1 }
-      // Chèn NGAY SAU dòng hiện tại (không nhảy xuống cuối danh sách)
-      next.splice(idx + 1, 0, {
-        key: uid(),
-        itemId: cur.itemId,
-        qty: 1,
-        note: '',
-        options: cur.options,
-      })
-      return next
-    })
-  }
+  const splitLine = () => {}
 
   const categories = useMemo(() => {
     const set = new Set(menu.map((m) => m.category).filter(Boolean))
@@ -426,7 +438,7 @@ export default function OrderPage() {
               item={m}
               qty={qtyByItem[m.id] || 0}
               groups={optionsByItem.get(m.id) || []}
-              onAdd={(opts) => addToCart(m.id, opts)}
+              onAdd={() => setAddModal({ mode: 'add', item: m })}
               onRemove={() => removeOneOfItem(m.id)}
               onSetQty={(n) => setQtyOfItem(m.id, n)}
             />
@@ -441,10 +453,26 @@ export default function OrderPage() {
           totalQty={totalQty}
           onChange={changeQty}
           onSetQty={setQty}
-          onNote={setNote}
-          onSplit={splitLine}
+          onEdit={(line) =>
+            setAddModal({
+              mode: 'edit',
+              item: line,
+              lineKey: line.key,
+              initial: { options: line.options, note: line.note, qty: line.qty },
+            })
+          }
           customer={customer}
           qrToken={qrToken}
+        />
+      )}
+
+      {addModal && (
+        <DishAddModal
+          item={addModal.item}
+          groups={optionsByItem.get(addModal.item.id) || []}
+          initial={addModal.initial}
+          onCancel={() => setAddModal(null)}
+          onConfirm={confirmAdd}
         />
       )}
     </div>
@@ -452,58 +480,14 @@ export default function OrderPage() {
 }
 
 /* --------------------------------------------------------------- *
- * THẺ MÓN — 1 món, xếp dọc, có tuỳ chọn kiểu GrabFood
+ * THẺ MÓN — 1 món, xếp dọc.
+ * Bấm "+ Thêm" -> mở MODAL chọn tuỳ chọn + ghi chú (kiểu GrabFood).
  * --------------------------------------------------------------- */
 function DishCard({ item, qty, groups, onAdd, onRemove, onSetQty }) {
-  const [picked, setPicked] = useState({}) // { groupId: [choiceId] }
-
-  /** Bấm 1 lựa chọn: nhóm đơn -> thay thế, nhóm đa -> bật/tắt. */
-  const toggleOption = (groupId, choiceId) => {
-    const group = groups.find((g) => g.id === groupId)
-    setPicked((prev) => {
-      const cur = prev[groupId] || []
-      if (group && !group.is_multi) {
-        // Chọn 1: bấm lại lựa chọn đang chọn -> bỏ chọn (cho phép không chọn)
-        return { ...prev, [groupId]: cur.includes(choiceId) ? [] : [choiceId] }
-      }
-      return {
-        ...prev,
-        [groupId]: cur.includes(choiceId)
-          ? cur.filter((x) => x !== choiceId)
-          : [...cur, choiceId],
-      }
-    })
-  }
-
-  /** Gom lựa chọn hiện tại thành mảng object đầy đủ (có tên + giá). */
-  const selectedOptions = useMemo(() => {
-    const out = []
-    for (const g of groups) {
-      for (const cid of picked[g.id] || []) {
-        const c = g.choices.find((x) => x.id === cid)
-        if (c) {
-          out.push({
-            id: c.id,
-            option_id: g.id,
-            menu_item_option_id: c.id,
-            name: c.name,
-            price_delta: c.price_delta || 0,
-          })
-        }
-      }
-    }
-    return out
-  }, [groups, picked])
-
-  // Nhóm BẮT BUỘC chưa chọn -> không cho thêm vào giỏ
-  const missingRequired = groups.some(
-    (g) => g.is_required && (picked[g.id] || []).length === 0,
-  )
-  const requiredNames = groups
-    .filter((g) => g.is_required && (picked[g.id] || []).length === 0)
-    .map((g) => g.name)
-
-  const priceNow = item.price + selectedOptions.reduce((s, o) => s + (o.price_delta || 0), 0)
+  // Tên các nhóm bắt buộc -> hiển thị gợi ý nhỏ dưới tên món
+  const requiredNames = groups.filter((g) => g.is_required).map((g) => g.name)
+  // Món có tuỳ chọn -> giá hiển thị là "từ giá"
+  const hasOptions = groups.length > 0
 
   return (
     <article className={`card dish dish-row ${item.is_available ? '' : 'dish-off'}`}>
@@ -512,15 +496,17 @@ function DishCard({ item, qty, groups, onAdd, onRemove, onSetQty }) {
           <h3 className="dish-name">{item.name}</h3>
           {item.description && <p className="dish-desc">{item.description}</p>}
           <div className="dish-meta">
-            <span className="price">{fmtVND(priceNow)}</span>
-            {priceNow !== item.price && (
-              <span className="price-base">{fmtVND(item.price)}</span>
-            )}
+            <span className="price">{hasOptions ? 'Từ ' : ''}{fmtVND(item.price)}</span>
             {item.category && <span className="tag">{item.category}</span>}
           </div>
+          {requiredNames.length > 0 && (
+            <div className="dish-req">Bắt buộc chọn: {requiredNames.join(', ')}</div>
+          )}
         </div>
 
         {item.is_available ? (
+          /* Số lượng hiển thị ở đây là TỔNG số phần của món đang có trong giỏ.
+             Gõ số lớn ở đây sẽ TĂNG dòng cuối cùng (giữ nguyên options). */
           <div className="stepper stepper-row">
             {qty > 0 && (
               <button
@@ -539,29 +525,16 @@ function DishCard({ item, qty, groups, onAdd, onRemove, onSetQty }) {
             )}
             <button
               className="btn-step btn-add"
-              onClick={() => onAdd(selectedOptions)}
-              disabled={missingRequired}
-              title={
-                missingRequired
-                  ? `Vui lòng chọn: ${requiredNames.join(', ')}`
-                  : 'Thêm vào giỏ'
-              }
+              onClick={() => onAdd()}
+              title="Thêm vào giỏ (chọn tuỳ chọn + ghi chú)"
             >
-              {qty > 0 ? '+ Thêm' : '+ Thêm'}
+              + Thêm
             </button>
           </div>
         ) : (
           <div className="sold-out">Hết hàng</div>
         )}
       </div>
-
-      {groups.length > 0 && (
-        <DishOptions groups={groups} value={picked} onChange={toggleOption} compact />
-      )}
-
-      {missingRequired && (
-        <div className="opt-warn">Vui lòng chọn: {requiredNames.join(', ')}</div>
-      )}
     </article>
   )
 }
@@ -574,8 +547,7 @@ function CartBar({
   totalQty,
   onChange,
   onSetQty,
-  onNote,
-  onSplit,
+  onEdit,
   customer,
   qrToken,
 }) {
@@ -701,7 +673,16 @@ function CartBar({
                 {cartItems.map((it) => (
                   <div key={it.key} className="cart-row">
                     <div className="cart-row-main">
-                      <strong>{it.name}</strong>
+                      <div className="cart-row-title">
+                        <strong>{it.name}</strong>
+                        <button
+                          className="btn-edit"
+                          onClick={() => onEdit(it)}
+                          title="Sửa tuỳ chọn / ghi chú của phần này"
+                        >
+                          ✏️ Sửa
+                        </button>
+                      </div>
                       {it.options?.length > 0 && (
                         <div className="cart-opts">
                           {it.options.map((o) => (
@@ -717,22 +698,10 @@ function CartBar({
                           ))}
                         </div>
                       )}
+                      {it.note?.trim() && (
+                        <div className="cart-note-view">📝 {it.note}</div>
+                      )}
                       <span className="muted">{fmtVND(it.unitPrice)} / món</span>
-                      <input
-                        className="cart-note-input"
-                        value={it.note || ''}
-                        onChange={(e) => onNote(it.key, e.target.value)}
-                        placeholder="Ghi chú cho phần này (không bắt buộc)…"
-                        maxLength={200}
-                      />
-                      {it.note?.trim() && it.qty > 1 && (
-                        <span className="cart-note-warn">
-                          ⚠ Ghi chú này áp dụng cho cả {it.qty} phần
-                        </span>
-                      )}
-                      {it.note?.trim() && it.qty === 1 && (
-                        <span className="cart-note-hint">Có ghi chú cho phần này</span>
-                      )}
                     </div>
 
                     <div className="cart-row-side">
@@ -755,15 +724,6 @@ function CartBar({
                           +
                         </button>
                       </div>
-                      {it.qty > 1 && (
-                        <button
-                          className="btn-split"
-                          onClick={() => onSplit(it.key)}
-                          title="Tách 1 phần thành dòng riêng để ghi chú khác"
-                        >
-                          ＋ Tách riêng
-                        </button>
-                      )}
                     </div>
 
                     <div className="cart-row-total">{fmtVND(it.unitPrice * it.qty)}</div>

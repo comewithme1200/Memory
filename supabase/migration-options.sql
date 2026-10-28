@@ -258,22 +258,25 @@ begin
         'id',    m.id,
         'name',  coalesce(nullif(m.name, ''), nullif(e.item->>'name', ''), '(không rõ)'),
         'price', m.price + coalesce((
+              -- Lấy TẤT CẢ tuỳ chọn của dòng món này.
+              -- Dùng jsonb_array_elements trực tiếp trên mảng `options` của
+              -- đúng 1 entry (line = e.idx) — KHÔNG dùng jsonb_agg vì sẽ tạo
+              -- mảng LỒNG mảng ([[{...}]]) -> o->>'menuItemOptionId' = NULL
+              -- -> không join được menu_item_options -> giá mất hết phần delta.
               select sum(mio.price_delta)
-              from jsonb_array_elements(
-                coalesce(
-                  (select jsonb_agg(eo->'options')
-                   from jsonb_array_elements(p_item_options) eo
-                   where (eo->>'line')::int = e.idx),
-                  '[]'::jsonb
-                )
-              ) as opts
-              cross join lateral jsonb_array_elements(opts) as o
+              from jsonb_array_elements(p_item_options) eo
+              cross join lateral jsonb_array_elements(
+                case when jsonb_typeof(eo->'options') = 'array'
+                     then eo->'options' else '[]'::jsonb end
+              ) as o
               left join public.menu_item_options mio
                 on mio.id::text = o->>'menuItemOptionId'
+              where (eo->>'line')::int = e.idx
             ), 0),
         'qty',   greatest(1, case when (e.item->>'qty') ~ '^-?[0-9]+$'
                                   then (e.item->>'qty')::int else 1 end),
         'note',  left(coalesce(e.item->>'note', ''), 200),
+        -- `with ordinality` đánh số TỪ 1 -> khớp với `line` client gửi lên.
         'idx',   e.idx
       )
       order by e.idx

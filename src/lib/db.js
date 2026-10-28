@@ -682,10 +682,14 @@ export async function createOrder(order) {
   const total = items.reduce((s, it) => s + it.price * it.qty, 0)
 
   // Tuỳ chọn khách chọn, gom theo index dòng món.
-  // Server dùng `line` để map đúng dòng món -> nhóm tuỳ chọn.
+  //
+  // `line` PHẢI đánh số TỪ 1 — khớp với `with ordinality` trong RPC
+  // `create_order` (Postgres đánh số phần tử mảng JSON từ 1).
+  // Nếu gửi từ 0, mọi tuỳ chọn bị lệch 1 dòng: dòng N nhận tuỳ chọn của
+  // dòng N+1, và dòng cuối mất sạch tuỳ chọn -> tính sai giá.
   const itemOptions = (order.itemOptions || [])
-    .map((entry, line) => ({
-      line,
+    .map((entry, index) => ({
+      line: index + 1,
       options: (entry?.options || []).map((o) => ({
         optionId: o.option_id || o.optionId || null,
         menuItemOptionId: o.menu_item_option_id || o.menuItemOptionId || null,
