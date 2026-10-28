@@ -10,10 +10,10 @@ Xây dựng bằng **React + Vite + HTML/CSS thuần**, dữ liệu lưu trên *
 
 | Trang | Đường dẫn | Dùng để |
 |---|---|---|
-| **Đặt hàng** | `#/` | Khách chọn món, ghi tên/SĐT/bàn, **ghi chú riêng cho từng món**, gửi đơn — *không cần đăng nhập* |
+| **Đặt hàng** | `#/` | Khách chọn món, ghi tên/SĐT/bàn, **ghi chú riêng cho từng món**, chọn **tiền mặt / chuyển khoản**, gửi đơn — *không cần đăng nhập* |
 | **Đăng nhập** | `#/quan-tri/dang-nhap` | Chủ quán đăng nhập bằng email + mật khẩu |
 | **Quản lý món** | `#/quan-tri/mon` | Thêm / sửa / xoá món, đặt giá, ẩn món hết hàng |
-| **Đơn hàng** | `#/quan-tri/orders` | Xem đơn mới, chuyển trạng thái, **in hoá đơn**, huỷ/xoá |
+| **Đơn hàng** | `#/quan-tri/orders` | **🔥 Bảng món cần làm** (gom món của đơn chưa xong), xem đơn mới, chuyển trạng thái, **tick "Đã thanh toán"**, **in hoá đơn**, huỷ/xoá |
 | **Tổng kết** | `#/quan-tri/tong-ket` | Tổng số suất từng món theo ngày/tuần/tháng, doanh thu |
 | **Khách quen & mã QR** | `#/quan-tri/khach` | Thêm khách quen (tên/SĐT/địa chỉ), **sinh mã QR** để khách quét → vào thẳng trang đặt món, **thông tin đã điền sẵn** |
 | **In hoá đơn** | tự động | Khi bấm "Xong & in hoá đơn" → mở hộp thoại in ngay, khổ giấy 80mm |
@@ -81,6 +81,7 @@ Mở trình duyệt tại: **http://localhost:5173**
 | `npm run preview` | Xem bản build tại http://localhost:4173 |
 | `npm run check` | Kiểm tra kết nối Supabase + hành vi RLS (gồm cả bảng trung gian) |
 | `npm run check:qr` | Kiểm tra riêng phần **khách quen / mã QR** (bảng `customers`, RPC, quyền) |
+| `npm run test:payment` | Kiểm tra phần **thanh toán** (cột `payment_method`, `is_paid`, RPC `create_order`) |
 | `npm run verify:migration` | So khớp dữ liệu đơn cũ (JSONB) với bảng `order_items` |
 | `npm run deploy` | Build + đẩy lên GitHub Pages (cần `gh-pages`) |
 
@@ -249,6 +250,48 @@ Tổng MONG ĐỢI: 95.000 đ
 Tổng THỰC TẾ: 95.000 đ
 ✅ GIÁ ĐÚNG
 ```
+
+### Bước 2f — (Mới) Thanh toán: tiền mặt / chuyển khoản
+
+> Bước này **bắt buộc** nếu bạn muốn dùng tính năng *chọn cách thanh toán*
+> và *tick "Đã thanh toán"*. Nếu không chạy, khách vẫn đặt món được (chỉ mất
+> phần chuyển khoản), nhưng đơn sẽ luôn hiện là "Tiền mặt".
+
+1. Vào **SQL Editor** → **New query**
+2. Dán toàn bộ nội dung file [`supabase/migration-payment.sql`](supabase/migration-payment.sql)
+3. Bấm **Run**
+
+File này:
+- thêm cột `orders.payment_method` (`cash` | `transfer`) và `orders.is_paid`
+- nâng RPC `create_order` lên **10 tham số** (thêm `p_payment_method`)
+
+> Script **chạy được nhiều lần** (idempotent) và **không xoá dữ liệu đơn cũ**
+> (đơn cũ tự nhận `cash` + chưa thanh toán).
+
+Kiểm tra bằng `npm run test:payment`:
+
+```
+  OK   RPC create_order nhận p_payment_method thành công
+       Server trả về payment_method = transfer
+  OK   is_paid mặc định = false (chưa thu tiền)
+  OK   Chủ quán tick "Đã thanh toán" thành công
+✓ Tính năng thanh toán hoạt động đúng.
+```
+
+#### 🏦 Đặt ảnh QR ngân hàng
+
+Mặc định app hiện một khung placeholder. Để hiện **ảnh QR thật của bạn**:
+
+1. Copy ảnh QR ngân hàng vào thư mục `public/` với tên **`bank-qr.png`**
+   (ảnh vuông, nền trắng, khoảng 500×500px trở lên là quét tốt nhất)
+2. Sửa `.env` (hoặc `.env.production`) nếu muốn dùng đường dẫn khác:
+
+```env
+VITE_BANK_QR_URL=/bank-qr.png
+```
+
+> Vite chỉ đọc biến `VITE_*` **lúc khởi động / build** → sửa xong phải tắt và
+> chạy lại `npm run dev` (hoặc `npm run build`) mới có hiệu lực.
 
 ### Bước 3 — Tạo tài khoản chủ quán
 
@@ -427,14 +470,20 @@ Bấm **"🖨️ In lại"** ở đơn đã hoàn thành để in lại.
 │   ├── schema.sql             # SQL tạo bảng + RLS + dữ liệu mẫu
 │   ├── migration-order-items.sql  # (Nâng cấp) tách bảng trung gian order_items
 │   ├── migration-customers-qr.sql # (Nâng cấp) bảng customers + RPC khách quen/QR
+│   ├── migration-options.sql  # (Nâng cấp) bảng options + tuỳ chọn món
+│   ├── migration-payment.sql  # (Nâng cấp) cột payment_method + is_paid (thanh toán)
+│   ├── fix-create-order-price.sql # Bản vá giá của RPC create_order (sinh tự động)
 │   ├── fix-summarize-permissions.sql  # Gỡ quyền xem doanh thu cho khách
 │   ├── fix-create-order-return.sql   # Đổi create_order trả về jsonb
 │   └── cleanup-test-data.sql  # Xoá đơn/món rác do script kiểm tra tạo ra
 ├── scripts/
 │   ├── check-supabase.mjs     # Kiểm tra kết nối + RLS (npm run check)
 │   ├── check-qr-schema.mjs    # Kiểm tra phần khách quen/QR (npm run check:qr)
+│   ├── test-payment.mjs       # Kiểm tra phần thanh toán (npm run test:payment)
 │   ├── test-customers-local.mjs # Test luồng khách quen ở chế độ demo (npm run test:local)
 │   └── verify-migration.mjs   # So khớp đơn cũ vs order_items (npm run verify:migration)
+├── public/
+│   └── bank-qr.png            # (Tuỳ chọn) ảnh QR ngân hàng khách quét — copy vào đây
 └── src/
     ├── main.jsx               # Gốc ứng dụng
     ├── App.jsx                # Định tuyến (HashRouter cho GitHub Pages)
@@ -446,6 +495,7 @@ Bấm **"🖨️ In lại"** ở đơn đã hoàn thành để in lại.
     │   └── format.js          # Định dạng tiền tệ / ngày giờ
     ├── components/
     │   ├── Invoice.jsx        # Giao diện hoá đơn 80mm
+    │   ├── BankQr.jsx         # Ảnh QR ngân hàng (public/bank-qr.png) + placeholder
     │   ├── PrintPortal.jsx    # Render hoá đơn vào #print-area rồi gọi window.print()
     │   └── ProtectedRoute.jsx # Chặn trang quản trị khi chưa đăng nhập
     └── pages/
@@ -460,7 +510,36 @@ Bấm **"🖨️ In lại"** ở đơn đã hoàn thành để in lại.
 
 ---
 
-## 💡 Ghi chú
+## 📱 Khách quen & mã QR
+
+Vào `#/quan-tri/khach` → nhập **tên / SĐT / địa chỉ** → bấm **"Thêm & tạo QR"**.
+
+| | |
+|---|---|
+| **QR chứa gì** | Chỉ chứa **token ngẫu nhiên** (`#/?qr=<token>`) — **không** chứa SĐT/địa chỉ |
+| **Khách quét** | Mở thẳng trang đặt món, tên/SĐT/địa chỉ **đã điền sẵn** |
+| **Dùng ở đâu** | In ra **dán lên bàn**, hoặc gửi ảnh cho khách qua Zalo |
+| **Tải ảnh** | Nút **⬇️ Ảnh** (tải PNG) hoặc **🖨️ In QR** (in riêng mã QR) |
+| **Copy link** | Nút **🔗 Copy link** — gửi link cho khách quét trên máy tính |
+| **Khách bị mất QR** | Nút **"Tạo lại QR"** → mã cũ không dùng được nữa |
+| **Tắt khách** | Bỏ tick *"Đang hoạt động"* → QR cũ ngay lập tức không dùng được |
+
+> **Vì sao không nhúng thẳng SĐT/địa chỉ vào QR?**
+> - URL ngắn → **QR dễ quét**, ít lỗi khi in.
+> - Không lộ thông tin cá nhân của khách trong **lịch sử trình duyệt** và log máy chủ.
+> - Tắt được từng khách mà không phải in lại QR.
+
+### Section "Thông tin giao hàng" trong giỏ (thu gọn)
+
+| | |
+|---|---|
+| **Mặc định** | **Thu gọn** — khách thấy 1 dòng tóm tắt, không bị chật |
+| **Tiêu đề khi đủ thông tin** | `Thông tin giao hàng ✓ Chị Lan · 12 Lý Thường Kiệt` |
+| **Tiêu đề khi thiếu** | `Thông tin giao hàng * Thiếu tên và địa chỉ` |
+| **Bấm "Xác nhận đặt món" mà thiếu** | Section **tự mở ra** + hiện lỗi, không phải tự tìm chỗ điền |
+| **Khách quét QR** | Section **tự mở sẵn** vì đã có đủ thông tin từ QR |
+
+---
 
 - **Đường dẫn có dấu `#`** (ví dụ `#/quan-tri/mon`) là do dùng `HashRouter` → deploy GitHub Pages không cần cấu hình redirect 404.
 - **Cập nhật đơn tự động**: trang Đơn hàng tự làm mới mỗi **15 giây** nên bếp thấy đơn mới gần như tức thì.
@@ -494,6 +573,56 @@ Bấm **"🖨️ In lại"** ở đơn đã hoàn thành để in lại.
   - Ghi chú hiện ở: trang đặt món (xác nhận), trang **Đơn hàng** (bếp đọc) và trên **hoá đơn in 80mm**.
   - Lưu ở bảng trung gian `order_items` (mỗi dòng món = 1 row) — xem phần *Cấu trúc dữ liệu* bên dưới.
 - **Mã đơn** gồm 3 chữ + 3 số (vd `EMW315`) để bếp gọi khách.
+
+---
+
+## 🔥 Tính năng cho bếp: bảng "Món cần làm"
+
+Vào `#/quan-tri/orders` → phía trên danh sách đơn có bảng **🔥 Món cần làm**.
+
+| | |
+|---|---|
+| **Gom từ đâu** | Tất cả món của các đơn đang ở trạng thái *Mới* + *Đang làm* |
+| **Cột hiển thị** | Tên món · giá · **số lượng cần làm** (cộng dồn) · số đơn có món đó |
+| **Ghi chú** | Các ghi chú của món đó được gom lại, hiện ngay dưới tên món (vd `📝 không da gà`) |
+| **Tự trừ** | Bấm **"Xong & in hoá đơn"** ở đơn → món của đơn đó **tự biến mất** khỏi bảng |
+| **Huỷ đơn** | Đơn bị huỷ cũng tự trừ khỏi bảng |
+
+> Bảng này **tự tính lại** mỗi lần trang làm mới (15 giây) → không cần bấm cập nhật.
+
+**Ví dụ:** có 3 đơn — đơn 1 có 5 xôi + 3 nước, đơn 2 có 2 xôi, đơn 3 có 1 nước
+→ bảng hiện: **Xôi: 7** (2 đơn) và **Nước: 4** (2 đơn).
+
+---
+
+## 💳 Tính năng thanh toán
+
+### Khách chọn cách thanh toán
+
+Trong modal giỏ hàng có ô **"Cách thanh toán"**:
+
+| | |
+|---|---|
+| **💵 Tiền mặt** (mặc định) | Khách trả tiền mặt khi nhận món |
+| **🏦 Chuyển khoản** | Hiện **mã QR ngân hàng** để khách quét + số tiền cần chuyển |
+
+Sau khi khách bấm "Xác nhận đặt món", màn hình **"Đặt món thành công"** cũng hiện lại
+QR ngân hàng + số tiền để khách quét lỡ mất màn hình.
+
+### Chủ quán đánh dấu đã thu tiền
+
+Ở trang `#/quan-tri/orders`, đơn chuyển khoản có:
+
+- Badge **🏦 Chuyển khoản** (vàng) → đổi thành **💰 Đã chuyển khoản** (xanh) khi đã thu tiền
+- Nút **💰 Đã thanh toán** → bấm 1 lần để đánh dấu đã nhận tiền
+  (bấm lần 2 → **↩️ Bỏ đánh dấu đã trả** nếu nhầm)
+
+> Trạng thái này **do chủ quán tick tay** — app không tự động đối soát với ngân hàng.
+> (Sau này nếu muốn tự động thì thêm webhook từ ngân hàng.)
+
+### Đặt ảnh QR ngân hàng
+
+Copy ảnh QR vào `public/bank-qr.png` là dùng được ngay (xem mục *Bước 2f* ở trên).
 
 ---
 

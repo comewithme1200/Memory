@@ -310,12 +310,14 @@ export default function OptionsPage() {
               <tbody>
                 {groups.map((g) => (
                   <tr key={g.id}>
-                    <td>
+                    <td className="td-title">
                       <strong>{g.name}</strong>
                       {g.description && <div className="muted small">{g.description}</div>}
                     </td>
-                    <td>{g.is_multi ? 'Có' : 'Không'}</td>
-                    <td className="t-r">{groupUsage.get(g.id) || 0} món</td>
+                    <td data-label="Chọn nhiều">{g.is_multi ? 'Có' : 'Không'}</td>
+                    <td className="t-r" data-label="Dùng cho">
+                      {groupUsage.get(g.id) || 0} món
+                    </td>
                     <td className="t-r">
                       <div className="btn-row btn-row-end">
                         <button className="btn btn-sm" onClick={() => startEditGroup(g)}>

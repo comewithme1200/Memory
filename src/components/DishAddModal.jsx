@@ -36,6 +36,17 @@ export default function DishAddModal({ item, groups = [], initial, onCancel, onC
     setErr('')
   }, [item?.id, initial])
 
+  // Bỏ focus mọi ô đang focus khi modal đóng (kể cả bấm nút ✕ / backdrop).
+  // Trên iOS, ô nhập đang focus làm trang bị PHÓNG TO; nếu không blur thì sau
+  // khi modal đóng trang vẫn giữ mức zoom -> bố cục bị lệch.
+  useEffect(() => {
+    return () => {
+      if (document.activeElement instanceof HTMLElement) {
+        document.activeElement.blur()
+      }
+    }
+  }, [])
+
   /** Bấm 1 lựa chọn: nhóm đơn -> thay thế, nhóm đa -> bật/tắt. */
   const toggleOption = (groupId, choiceId) => {
     const group = groups.find((g) => g.id === groupId)
@@ -88,6 +99,15 @@ export default function DishAddModal({ item, groups = [], initial, onCancel, onC
       return
     }
     setErr('')
+    // Bỏ focus khỏi ô ghi chú trước khi đóng modal.
+    //
+    // LÝ DO: trên iOS, khi bấm vào ô nhập, Safari tự phóng to trang (zoom).
+    // Sau khi modal đóng, phần tử đang focus vẫn còn -> trang GIỮ nguyên mức
+    // zoom và bị lệch, nhìn rất khó chịu. Blur chủ động để trả viewport về
+    // kích thước gốc.
+    if (document.activeElement instanceof HTMLElement) {
+      document.activeElement.blur()
+    }
     onConfirm({ options: selectedOptions, note: note.trim(), qty })
   }
 

@@ -11,7 +11,7 @@ export default function AdminLayout() {
   }
 
   return (
-    <div className="page">
+    <div className="page page-admin">
       <header className="topbar">
         <div className="brand">
           <span className="brand-mark">🍜</span>

@@ -3,6 +3,7 @@ import { useNavigate, useSearchParams } from 'react-router-dom'
 import { listMenu, listAllItemOptions, createOrder, getCustomerByToken } from '../lib/db.js'
 import { fmtVND, uid } from '../lib/format.js'
 import DishAddModal from '../components/DishAddModal.jsx'
+import BankQr from '../components/BankQr.jsx'
 
 const CART_KEY = 'quan-an-sang:cart:v2'
 
@@ -560,6 +561,9 @@ function CartBar({
   const [sending, setSending] = useState(false)
   const [err, setErr] = useState('')
 
+  // Cách thanh toán: 'cash' (tiền mặt) | 'transfer' (chuyển khoản)
+  const [paymentMethod, setPaymentMethod] = useState('cash')
+
   /**
    * Section "Thông tin khách" mặc định THU GỌN.
    * - Đã điền đủ (tên + địa chỉ) -> vẫn thu gọn, hiện tóm tắt 1 dòng.
@@ -610,6 +614,7 @@ function CartBar({
         customer_token: qrToken,
         table_no: table,
         note,
+        payment_method: paymentMethod,
         items: cartItems.map((c) => ({
           id: c.id,
           name: c.name,
@@ -804,6 +809,42 @@ function CartBar({
                   placeholder="Ít cay, thêm nước sốt..."
                   rows={2}
                 />
+              </div>
+
+              {/* ---- CHỌN CÁCH THANH TOÁN ---- */}
+              <div className="pay-box">
+                <div className="pay-head">Cách thanh toán</div>
+                <div className="pay-choices">
+                  <button
+                    type="button"
+                    className={`pay-choice ${paymentMethod === 'cash' ? 'pay-choice-on' : ''}`}
+                    onClick={() => setPaymentMethod('cash')}
+                  >
+                    <span className="pay-choice-icon">💵</span>
+                    <span className="pay-choice-label">Tiền mặt</span>
+                  </button>
+                  <button
+                    type="button"
+                    className={`pay-choice ${paymentMethod === 'transfer' ? 'pay-choice-on' : ''}`}
+                    onClick={() => setPaymentMethod('transfer')}
+                  >
+                    <span className="pay-choice-icon">🏦</span>
+                    <span className="pay-choice-label">Chuyển khoản</span>
+                  </button>
+                </div>
+
+                {paymentMethod === 'transfer' && (
+                  <div className="pay-transfer">
+                    <BankQr size={200} />
+                    <div className="pay-transfer-hint">
+                      <strong>Quét mã để chuyển khoản</strong>
+                      <div className="muted small">
+                        Chuyển đúng số tiền <strong>{fmtVND(total)}</strong> rồi bấm "Xác nhận
+                        đặt món". Quán sẽ kiểm tra và báo bạn.
+                      </div>
+                    </div>
+                  </div>
+                )}
               </div>
 
               {err && <div className="alert alert-error">{err}</div>}

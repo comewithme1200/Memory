@@ -193,14 +193,16 @@ export default function MenuPage() {
               <tbody>
                 {items.map((m, i) => (
                   <tr key={m.id}>
-                    <td className="muted">{m.sort_order ?? i + 1}</td>
-                    <td>
+                    <td className="muted td-plain">{m.sort_order ?? i + 1}</td>
+                    <td className="td-title">
                       <strong>{m.name}</strong>
                       {m.description && <div className="muted small">{m.description}</div>}
                     </td>
-                    <td>{m.category ? <span className="tag">{m.category}</span> : '-'}</td>
-                    <td className="t-r">{fmtVND(m.price)}</td>
-                    <td className="t-r">
+                    <td data-label="Nhóm">{m.category ? <span className="tag">{m.category}</span> : '-'}</td>
+                    <td className="t-r" data-label="Giá">
+                      {fmtVND(m.price)}
+                    </td>
+                    <td className="t-r" data-label="Trạng thái">
                       <button
                         className={`badge ${m.is_available ? 'badge-ok' : 'badge-off'}`}
                         onClick={() => onToggle(m)}

@@ -84,6 +84,14 @@ export default function Invoice({ order }) {
           <span>Số lượng:</span>
           <span>{count} món</span>
         </div>
+        <div className="inv-row">
+          <span>Thanh toán:</span>
+          <span>
+            {order.payment_method === 'transfer'
+              ? `Chuyển khoản${order.is_paid ? ' (ĐÃ THU TIỀN)' : ' (CHƯA THU TIỀN)'}`
+              : 'Tiền mặt'}
+          </span>
+        </div>
 
         {order.note && (
           <>

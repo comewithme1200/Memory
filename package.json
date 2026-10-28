@@ -12,6 +12,7 @@
     "check:qr": "node scripts/check-qr-schema.mjs",
     "check:options": "node scripts/check-options-schema.mjs",
     "test:price": "node scripts/test-order-price.mjs",
+    "test:payment": "node scripts/test-payment.mjs",
     "seed:options": "node scripts/seed-options.mjs",
     "test:local": "node scripts/test-customers-local.mjs",
     "verify:migration": "node scripts/verify-migration.mjs",

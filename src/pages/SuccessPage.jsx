@@ -1,11 +1,13 @@
 import { Link, useLocation } from 'react-router-dom'
 import { fmtVND } from '../lib/format.js'
+import BankQr from '../components/BankQr.jsx'
 
 export default function SuccessPage() {
   const location = useLocation()
   const order = location.state?.order
   const items = order?.items || []
   const count = items.reduce((s, it) => s + (it.qty || 0), 0)
+  const isTransfer = order?.payment_method === 'transfer'
 
   return (
     <div className="page page-center">
@@ -28,6 +30,24 @@ export default function SuccessPage() {
             <div className="modal-total">
               <span>Tổng ({count} món)</span>
               <strong>{fmtVND(order.total)}</strong>
+            </div>
+
+            {/* ---- Thanh toán ---- */}
+            <div className="success-pay">
+              <div className="success-pay-head">
+                {isTransfer ? '🏦 Chuyển khoản' : '💵 Thanh toán tiền mặt'}
+              </div>
+              {isTransfer ? (
+                <>
+                  <BankQr size={220} />
+                  <p className="muted small">
+                    Quét mã và chuyển đúng <strong>{fmtVND(order.total)}</strong>. Quán sẽ kiểm tra
+                    và xác nhận cho bạn.
+                  </p>
+                </>
+              ) : (
+                <p className="muted small">Bạn trả tiền mặt khi nhận món. Cảm ơn bạn!</p>
+              )}
             </div>
           </>
         )}

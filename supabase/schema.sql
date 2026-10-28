@@ -29,6 +29,10 @@ create table if not exists public.orders (
   items         jsonb       not null default '[]'::jsonb,
   total         integer     not null default 0,
   status        text        not null default 'new',
+  -- Thanh toán: 'cash' (tiền mặt) | 'transfer' (chuyển khoản).
+  -- is_paid do CHỦ QUÁN tick tay sau khi nhận được tiền / thông báo ngân hàng.
+  payment_method text       not null default 'cash',
+  is_paid       boolean     not null default false,
   created_at    timestamptz not null default now(),
   completed_at  timestamptz
 );

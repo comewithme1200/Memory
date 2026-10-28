@@ -1515,6 +1515,86 @@ a {
   gap: 8px;
   flex-wrap: wrap;
   margin-top: auto;
+  align-items: center;
+}
+
+/* --------------------- NÚT 3 CHẤM CỦA 1 ĐƠN --------------------- */
+
+.order-menu {
+  position: relative;
+  margin-left: auto;
+}
+
+.btn-icon-menu {
+  padding: 5px 10px;
+  font-size: 18px;
+  line-height: 1;
+  font-weight: 800;
+  color: var(--ink-2);
+  background: #fff;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  cursor: pointer;
+  min-width: 38px;
+}
+
+.btn-icon-menu:hover {
+  border-color: var(--brand);
+  color: var(--brand);
+}
+
+.btn-icon-menu-on {
+  background: var(--brand-soft);
+  border-color: var(--brand);
+  color: var(--brand-dark);
+}
+
+.order-menu-pop {
+  position: absolute;
+  right: 0;
+  bottom: calc(100% + 6px);
+  z-index: 60;
+  min-width: 190px;
+  background: #fff;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  box-shadow: var(--shadow-lg);
+  padding: 5px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  animation: pop 0.14s ease;
+}
+
+.order-menu-item {
+  width: 100%;
+  text-align: left;
+  border: none;
+  background: transparent;
+  border-radius: 7px;
+  padding: 9px 11px;
+  font-size: 13.5px;
+  font-weight: 600;
+  font-family: inherit;
+  color: var(--ink);
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.order-menu-item:hover {
+  background: var(--bg);
+}
+
+/* Xoá đơn — nằm CUỐI menu, màu đỏ */
+.order-menu-item-danger {
+  color: var(--danger);
+  border-top: 1px solid var(--line);
+  border-radius: 0 0 7px 7px;
+  margin-top: 3px;
+}
+
+.order-menu-item-danger:hover {
+  background: var(--danger-soft);
 }
 
 /* ------------------------------ STATS ------------------------------- */
@@ -1686,7 +1766,6 @@ a {
 }
 
 /* ------------------------------ PAGE HEADING ----------------------- */
-
 .page-heading {
   font-size: 19px;
   font-weight: 700;
@@ -1963,5 +2042,473 @@ a {
   .btn-add {
     padding: 7px 10px;
     font-size: 14px;
+  }
+}
+
+/* ==================================================================== *
+ * THANH TOÁN — chọn tiền mặt / chuyển khoản + QR ngân hàng
+ * ==================================================================== */
+
+.pay-box {
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 14px;
+  margin: 14px 0;
+  background: var(--bg);
+}
+
+.pay-head {
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--ink-2);
+  margin-bottom: 10px;
+}
+
+.pay-choices {
+  display: flex;
+  gap: 10px;
+}
+
+.pay-choice {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 12px 10px;
+  border: 2px solid var(--line);
+  border-radius: 10px;
+  background: var(--card);
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--ink);
+  cursor: pointer;
+  transition: border-color 0.15s, background 0.15s;
+}
+
+.pay-choice:hover {
+  border-color: var(--brand);
+}
+
+.pay-choice-on {
+  border-color: var(--brand);
+  background: var(--brand-soft);
+  color: var(--brand-dark);
+}
+
+.pay-choice-icon {
+  font-size: 18px;
+}
+
+.pay-choice-label {
+  white-space: nowrap;
+}
+
+/* Khung hiện QR ngân hàng khi khách chọn "chuyển khoản" */
+.pay-transfer {
+  margin-top: 14px;
+  padding-top: 14px;
+  border-top: 1px dashed var(--line);
+  display: flex;
+  gap: 16px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+.pay-transfer-hint {
+  flex: 1;
+  min-width: 180px;
+  line-height: 1.5;
+}
+
+.bank-qr-img {
+  display: block;
+  flex: 0 0 auto;
+  border-radius: 10px;
+  border: 1px solid var(--line);
+  background: #fff;
+  object-fit: contain;
+}
+
+.bank-qr-missing {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: 2px dashed var(--line);
+  border-radius: 10px;
+  background: var(--card);
+  color: var(--ink-2);
+  font-size: 13px;
+  text-align: center;
+  padding: 10px;
+  overflow: hidden;
+}
+
+.bank-qr-placeholder-svg {
+  display: block;
+}
+
+.bank-qr-missing small {
+  font-size: 11.5px;
+  color: var(--muted);
+}
+
+/* Thanh toán trên trang "đặt món thành công" */
+.success-pay {
+  margin: 16px 0 4px;
+  padding: 16px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--bg);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+}
+
+.success-pay-head {
+  font-size: 14px;
+  font-weight: 700;
+}
+
+.success-pay p {
+  margin: 0;
+  line-height: 1.5;
+}
+
+/* ==================================================================== *
+ * 🍥 MÓN CẦN LÀM — bảng gom món của các đơn chưa xong
+ * ==================================================================== */
+
+.kitchen-panel {
+  border-color: #f3c98b;
+  background: linear-gradient(180deg, #fffaf0 0%, var(--card) 60%);
+}
+
+.kitchen-qty {
+  display: inline-block;
+  min-width: 38px;
+  padding: 4px 10px;
+  border-radius: 999px;
+  background: #fff1d6;
+  border: 1px solid #f0c987;
+  color: #8a5a00;
+  font-weight: 800;
+  font-size: 15px;
+  text-align: center;
+}
+
+/* ==================================================================== *
+ * 📱 GIAO DIỆN ĐIỆN THOẠI CHO TRANG QUẢN TRỊ
+ *
+ * Chủ quán thường đứng bếp, cầm điện thoại. Nên:
+ *   - Tabs cuộn ngang, dạng "chip" tròn dễ bấm
+ *   - Bảng (món / tổng kết / khách) chuyển thành DANH SÁCH THẺ
+ *   - Nút bấm to, không chen chúc
+ *   - Form 1 cột
+ * ==================================================================== */
+
+/* --- Bảng -> thẻ dọc --- */
+@media (max-width: 700px) {
+  /* Ẩn tiêu đề bảng */
+  .table thead {
+    display: none;
+  }
+
+  .table,
+  .table tbody,
+  .table tr,
+  .table td {
+    display: block;
+    width: 100%;
+  }
+
+  .table tr {
+    background: #fff;
+    border: 1px solid var(--line);
+    border-radius: 12px;
+    margin-bottom: 10px;
+    padding: 4px 0;
+    box-shadow: var(--shadow);
+  }
+
+  .table td {
+    border-bottom: none;
+    padding: 7px 13px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    text-align: left;
+    font-size: 13.5px;
+    color: var(--ink-2);
+  }
+
+  /* Nhãn cột lấy từ data-label */
+  .table td::before {
+    content: attr(data-label);
+    font-weight: 700;
+    font-size: 12.5px;
+    color: var(--muted);
+    flex: 0 0 auto;
+  }
+
+  /* Ô tiêu đề -> đậm, cỡ lớn, không có nhãn */
+  .table td.td-title {
+    display: block;
+    font-weight: 700;
+    font-size: 15.5px;
+    color: var(--ink);
+    border-bottom: 1px dashed var(--line);
+    padding-bottom: 9px;
+  }
+
+  .table td.td-title::before {
+    content: none;
+  }
+
+  /* Ô chỉ chứa giá trị (không nhãn) */
+  .table td.td-plain::before {
+    content: none;
+  }
+
+  .table td.t-r {
+    text-align: left !important;
+  }
+
+  /* Dòng chứa nút thao tác -> dồn nút sang phải, cho dễ bấm */
+  .table td:last-child {
+    border-top: 1px dashed var(--line);
+    padding-top: 9px;
+    margin-top: 3px;
+  }
+
+  .table td:last-child .btn-row,
+  .table td:last-child .btn-row-end {
+    justify-content: flex-end;
+    width: 100%;
+    gap: 7px;
+  }
+
+  .table td:last-child .btn {
+    flex: 1;
+    max-width: 150px;
+    padding: 10px 10px;
+    font-size: 13.5px;
+  }
+
+  /* Thanh tỉ lệ (bảng tổng kết) cần đủ rộng */
+  .table td .bar {
+    flex: 1 1 140px;
+    min-width: 110px;
+  }
+
+  /* Bảng gom "món cần làm": tiêu đề là tên món + ghi chú */
+  .kitchen-panel .table td.td-title {
+    display: block;
+  }
+}
+
+/* --- Tabs dạng chip, cuộn ngang, dễ bấm bằng ngón cái --- */
+@media (max-width: 700px) {
+  .page-admin .tabs {
+    margin: 12px 0;
+    padding: 5px;
+    gap: 5px;
+    border-radius: 999px;
+    position: sticky;
+    top: 0;
+    z-index: 15;
+    scrollbar-width: none;
+  }
+
+  .page-admin .tabs::-webkit-scrollbar {
+    display: none;
+  }
+
+  .page-admin .tab {
+    padding: 9px 15px;
+    border-radius: 999px;
+    font-size: 13.5px;
+  }
+
+  /* Header gọn lại */
+  .page-admin .topbar {
+    padding: 12px 0;
+    gap: 10px;
+  }
+
+  .page-admin .brand-mark {
+    width: 40px;
+    height: 40px;
+    font-size: 24px;
+    border-radius: 10px;
+  }
+
+  .page-admin .brand h1 {
+    font-size: 17px;
+  }
+
+  .page-admin .brand-sub {
+    font-size: 12px;
+  }
+
+  .page-admin .topbar .btn {
+    padding: 8px 12px;
+    font-size: 13.5px;
+  }
+
+  /* Panel & thẻ: bớt viền/padding cho thoáng */
+  .page-admin .panel {
+    padding: 14px;
+    margin: 12px 0;
+  }
+
+  .page-admin .page-heading {
+    font-size: 17px;
+  }
+
+  .page-admin .page-sub {
+    font-size: 13px;
+  }
+
+  /* Form 1 cột */
+  .page-admin .form-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .page-admin .form-actions {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .page-admin .form-actions .btn-row {
+    justify-content: stretch;
+  }
+
+  .page-admin .form-actions .btn {
+    flex: 1;
+  }
+
+  /* Ô nhập cỡ chữ >= 16px -> iOS KHÔNG tự phóng to khi focus */
+  .page-admin .field input,
+  .page-admin .field textarea,
+  .page-admin .field select {
+    font-size: 16px;
+    padding: 11px 12px;
+  }
+
+  /* Chip lọc cuộn ngang */
+  .page-admin .chips {
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    scrollbar-width: none;
+    padding-bottom: 2px;
+  }
+
+  .page-admin .chips::-webkit-scrollbar {
+    display: none;
+  }
+
+  .page-admin .chip {
+    flex: 0 0 auto;
+  }
+
+  /* Thẻ đơn hàng */
+  .page-admin .order-card {
+    padding: 14px;
+  }
+
+  .page-admin .order-head {
+    flex-direction: column;
+    gap: 8px;
+  }
+
+  .page-admin .order-total {
+    text-align: left;
+    display: flex;
+    align-items: baseline;
+    gap: 8px;
+  }
+
+  .page-admin .order-code {
+    font-size: 15.5px;
+  }
+
+  /* Nút trong đơn: to, dễ bấm */
+  .page-admin .order-actions .btn {
+    padding: 10px 14px;
+    font-size: 14px;
+  }
+
+  /* Thống kê: 2 cột */
+  .page-admin .stat-row {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 10px;
+  }
+
+  .page-admin .stat {
+    padding: 13px;
+  }
+
+  .page-admin .stat-value {
+    font-size: 21px;
+  }
+}
+
+/* --- Modal trên điện thoại: bám đáy, full width --- */
+@media (max-width: 700px) {
+  .modal-backdrop {
+    padding: 0;
+    align-items: flex-end;
+  }
+
+  .modal {
+    max-width: 100%;
+    max-height: 94vh;
+    border-radius: 18px 18px 0 0;
+  }
+
+  .modal-head {
+    padding: 14px 16px;
+  }
+
+  .modal-body {
+    padding: 14px 16px;
+  }
+
+  .modal-foot {
+    padding: 12px 16px;
+    flex-wrap: wrap;
+  }
+
+  .modal-foot .btn {
+    flex: 1;
+  }
+
+  /* Menu 3 chấm: mở rộng, dễ bấm */
+  .order-menu-pop {
+    min-width: 210px;
+  }
+
+  .order-menu-item {
+    padding: 12px 13px;
+    font-size: 14.5px;
+  }
+}
+
+/* --- iOS: input cỡ nhỏ bị tự zoom khi focus -> ép >= 16px --- */
+@media (max-width: 700px) {
+  .field input,
+  .field textarea,
+  .field select,
+  .qty-input,
+  .opt-chip {
+    font-size: 16px;
+  }
+
+  .qty-input {
+    width: 66px;
   }
 }

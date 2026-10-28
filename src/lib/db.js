@@ -710,6 +710,8 @@ export async function createOrder(order) {
     itemOptions,
     total,
     status: 'new',
+    // Cách thanh toán khách chọn: 'cash' (tiền mặt) | 'transfer' (chuyển khoản).
+    payment_method: order.payment_method === 'transfer' ? 'transfer' : 'cash',
     // Token khách quen (từ QR). Server dùng nó để lấy thông tin trong DB.
     customer_token: (order.customer_token || '').trim(),
   }
@@ -780,7 +782,20 @@ async function tryCreateOrderRpc(payload) {
   //   3. MỚI (8 tham số)        -> có địa chỉ + token khách quen
   // Thử bản mới trước; nếu báo lỗi về tham số -> thử bản cũ.
   const attempts = [
-    // Bản mới nhất (9 tham số): có địa chỉ + token khách quen + tuỳ chọn
+    // Bản mới nhất (10 tham số): thêm cách thanh toán + địa chỉ + token + tuỳ chọn
+    {
+      p_code: payload.code,
+      p_customer_name: payload.customer_name,
+      p_customer_phone: payload.customer_phone,
+      p_customer_address: payload.customer_address,
+      p_table_no: payload.table_no,
+      p_note: payload.note,
+      p_items: payload.items,
+      p_customer_token: payload.customer_token,
+      p_payment_method: payload.payment_method,
+      p_item_options: payload.itemOptions,
+    },
+    // Bản 9 tham số: có địa chỉ + token khách quen + tuỳ chọn
     {
       p_code: payload.code,
       p_customer_name: payload.customer_name,
@@ -821,10 +836,16 @@ async function tryCreateOrderRpc(payload) {
       break
     }
     const msg = res.error.message || ''
-    // Hàm không tồn tại -> fallback đường cũ.
-    if (/does not exist|could not find|not found|schema cache/i.test(msg)) return null
-    // Sai danh sách tham số -> thử bản tiếp theo.
-    if (/function .*create_order.*does not exist|unknown function|invalid input/i.test(msg)) continue
+    // Sai chữ ký / hàm chưa có trong cache -> thử bản tiếp theo.
+    //
+    // PostgREST trả về CÙNG một câu cho cả 2 trường hợp:
+    //   "Could not find the function public.create_order(...) in the schema cache"
+    // nên KHÔNG thể phân biệt bằng message. Ta cứ thử hết các bản; nếu bản
+    // nào khớp sẽ chạy được. Hết cách -> return null -> caller fallback
+    // sang đường insert thẳng (xem createOrder).
+    if (/does not exist|could not find|not found|schema cache|unknown function|invalid input/i.test(msg)) {
+      continue
+    }
     throw new Error(friendlyError(res.error, 'Đặt hàng'))
   }
   if (!data) return null
@@ -837,6 +858,8 @@ async function tryCreateOrderRpc(payload) {
     table_no: payload.table_no,
     note: payload.note,
     status: 'new',
+    payment_method: payload.payment_method,
+    is_paid: false,
     created_at: new Date().toISOString(),
     completed_at: null,
   }
@@ -849,6 +872,8 @@ async function tryCreateOrderRpc(payload) {
       id: data.id,
       code: data.code || payload.code,
       total: Number(data.total) || 0,
+      payment_method: data.payment_method || payload.payment_method,
+      is_paid: data.is_paid === true,
       items: serverItems.map((it, i) => ({
         ...it,
         // Server đã trả kèm `options` (đã chốt giá). Nếu không có (bản cũ),
@@ -888,6 +913,31 @@ export async function updateOrderStatus(id, status) {
     .select()
     .single()
   if (error) throw new Error(friendlyError(error, 'Cập nhật đơn'))
+  return data
+}
+
+/**
+ * Cập nhật trạng thái thanh toán của đơn (chủ quán tick tay).
+ *
+ * @param {string} id
+ * @param {boolean} isPaid  true = đã thu tiền, false = chưa thu
+ */
+export async function updateOrderPayment(id, isPaid) {
+  const patch = { is_paid: Boolean(isPaid) }
+  if (!supabase) {
+    return withLocal((d) => {
+      const i = d.orders.findIndex((x) => x.id === id)
+      if (i >= 0) d.orders[i] = { ...d.orders[i], ...patch }
+      return d.orders[i] || null
+    })
+  }
+  const { data, error } = await supabase
+    .from('orders')
+    .update(patch)
+    .eq('id', id)
+    .select()
+    .single()
+  if (error) throw new Error(friendlyError(error, 'Cập nhật thanh toán'))
   return data
 }
 

@@ -179,6 +179,9 @@ create policy "oio admin all" on public.order_item_options
 -- ĐỔI DANH SÁCH THAM SỐ -> phải `drop` hàm cũ trước (PostgreSQL không cho
 -- `create or replace` đổi kiểu trả về / danh sách tham số).
 -- Hàm không lưu dữ liệu nên drop an toàn.
+-- Dòng đầu là chữ ký MỚI NHẤT (10 tham số, có p_payment_method) để chạy lại
+-- script nhiều lần không tạo overload thừa trong DB.
+drop function if exists public.create_order(text, text, text, text, text, text, jsonb, text, jsonb, text);
 drop function if exists public.create_order(text, text, text, text, text, text, jsonb, text, jsonb);
 drop function if exists public.create_order(text, text, text, text, text, text, jsonb, text);
 drop function if exists public.create_order(text, text, text, text, text, text, jsonb);
@@ -193,6 +196,11 @@ create or replace function public.create_order(
   p_note            text default '',
   p_items           jsonb default '[]'::jsonb,
   p_customer_token  text default '',
+  -- Cách thanh toán khách chọn: 'cash' (tiền mặt) | 'transfer' (chuyển khoản).
+  -- Server chuẩn hoá về 'cash' nếu giá trị lạ. Trạng thái ĐÃ THU TIỀN (is_paid)
+  -- do CHỦ QUÁN tick tay sau khi nhận tiền / thấy thông báo ngân hàng.
+  p_payment_method  text default 'cash',
+  -- Tuỳ chọn khách chọn cho từng dòng món.
   -- Tuỳ chọn khách chọn cho từng dòng món.
   -- Định dạng: [{ "line": 0, "options": [
   --   { "optionId": "<uuid>", "menuItemOptionId": "<uuid>",
@@ -301,9 +309,10 @@ begin
   from jsonb_array_elements(v_items) as it;
 
   -- --- Chèn đơn ---
+  -- payment_method chuẩn hoá: chỉ nhận 'transfer', còn lại thành 'cash'.
   insert into public.orders (
     id, code, customer_name, customer_phone, customer_address, customer_id,
-    table_no, note, total, status
+    table_no, note, total, status, payment_method, is_paid
   ) values (
     v_order_id,
     btrim(p_code),
@@ -314,7 +323,9 @@ begin
     left(coalesce(p_table_no, ''), 50),
     left(coalesce(p_note, ''), 500),
     v_total,
-    'new'
+    'new',
+    case when lower(btrim(coalesce(p_payment_method, ''))) = 'transfer' then 'transfer' else 'cash' end,
+    false
   );
 
   -- --- Chèn dòng món (giá đã chốt) ---
@@ -361,6 +372,8 @@ begin
     'id',    v_order_id,
     'code', btrim(p_code),
     'total', v_total,
+    'payment_method', case when lower(btrim(coalesce(p_payment_method, ''))) = 'transfer' then 'transfer' else 'cash' end,
+    'is_paid', false,
     'items', coalesce((
       select jsonb_agg(
         jsonb_build_object(

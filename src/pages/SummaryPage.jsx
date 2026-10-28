@@ -124,19 +124,21 @@ export default function SummaryPage() {
               <tbody>
                 {data.rows.map((r, i) => (
                   <tr key={r.id}>
-                    <td className="muted">{i + 1}</td>
-                    <td>
+                    <td className="muted td-plain">{i + 1}</td>
+                    <td className="td-title">
                       <strong>{r.name}</strong>
                     </td>
-                    <td>
+                    <td data-label="Tỉ lệ">
                       <div className="bar">
                         <div className="bar-fill" style={{ width: `${(r.qty / maxQty) * 100}%` }} />
                       </div>
                     </td>
-                    <td className="t-r">
+                    <td className="t-r" data-label="Số lượng">
                       <strong>{fmtNumber(r.qty)}</strong>
                     </td>
-                    <td className="t-r muted">{fmtVND(r.revenue)}</td>
+                    <td className="t-r muted" data-label="Doanh thu">
+                      {fmtVND(r.revenue)}
+                    </td>
                   </tr>
                 ))}
               </tbody>

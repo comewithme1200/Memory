@@ -288,13 +288,13 @@ export default function CustomersPage() {
               <tbody>
                 {customers.map((c) => (
                   <tr key={c.id}>
-                    <td>
+                    <td className="td-title">
                       <strong>{c.name}</strong>
                       {c.note && <div className="muted small">{c.note}</div>}
                     </td>
-                    <td className="t-r">{c.phone || '-'}</td>
-                    <td className="small">{c.address || '-'}</td>
-                    <td className="t-r">
+                    <td data-label="SĐT">{c.phone || '-'}</td>
+                    <td data-label="Địa chỉ">{c.address || '-'}</td>
+                    <td className="t-r" data-label="Trạng thái">
                       <span className={`badge ${c.is_active !== false ? 'badge-ok' : 'badge-off'}`}>
                         {c.is_active !== false ? 'Đang hoạt động' : 'Đã tắt'}
                       </span>
