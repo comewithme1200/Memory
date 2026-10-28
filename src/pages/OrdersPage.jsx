@@ -1,10 +1,11 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { flushSync } from 'react-dom'
-import { listOrders, updateOrderStatus, deleteOrder, updateOrderPayment } from '../lib/db.js'
+import { listOrders, updateOrderStatus, updateOrderPayment } from '../lib/db.js'
 import { useOrdersRealtime } from '../lib/useOrdersRealtime.js'
 import { fmtVND, fmtTime } from '../lib/format.js'
 import Invoice from '../components/Invoice.jsx'
 import PrintPortal from '../components/PrintPortal.jsx'
+import RowMenu from '../components/RowMenu.jsx'
 
 const STATUS = {
   new: { label: 'Mới', cls: 'badge-new' },
@@ -20,6 +21,19 @@ export default function OrdersPage() {
   const [filter, setFilter] = useState('active')
   const [preview, setPreview] = useState(null) // xem trước trong modal
   const [printing, setPrinting] = useState(null) // đang in (mở hộp thoại in)
+
+  /**
+   * 2 TAB trong trang "Đơn hàng":
+   *   - 'kitchen': bảng "🔥 Món cần làm" — bếp nhìn tổng món cần làm.
+   *   - 'orders' : danh sách đơn chi tiết (bấm từng đơn để xử lý).
+   *
+   * VÌ SAO tách?
+   *   Trước đây bảng "Món cần làm" nằm TRÊN danh sách đơn. Mỗi lần chủ quán
+   *   muốn xem danh sách đơn thì phải CUỘN LÊN XUỐNG qua cả bảng tổng hợp
+   *   (bảng này càng dài càng tốn chỗ). Tách thành 2 tab thì mỗi phần có
+   *   đúng 1 màn hình, không phải cuộn.
+   */
+  const [tab, setTab] = useState('kitchen')
 
   /**
    * Tải lại danh sách đơn. TRẢ VỀ mảng đơn đã gắn món.
@@ -111,16 +125,6 @@ export default function OrdersPage() {
           setError('Không tìm thấy đơn để in. Hãy bấm "In lại" trong danh sách.')
         }
       }
-    } catch (e) {
-      setError(e.message)
-    }
-  }
-
-  const onDelete = async (id) => {
-    if (!window.confirm('Xoá đơn này?')) return
-    try {
-      await deleteOrder(id)
-      await reload()
     } catch (e) {
       setError(e.message)
     }
@@ -226,67 +230,97 @@ export default function OrdersPage() {
 
       {error && <div className="alert alert-error">{error}</div>}
 
-      {/* ---- 🔥 MÓN CẦN LÀM — gom tất cả món của đơn chưa xong ---- */}
-      {kitchen.length > 0 && (
-        <section className="panel kitchen-panel">
-          <h2 className="panel-title">🔥 Món cần làm ({kitchen.length} món)</h2>
-          <p className="panel-hint">
-            Tổng hợp món của tất cả đơn chưa hoàn thành, đã tách theo tuỳ chọn (vd xôi
-            siêu to và xôi thường là 2 dòng riêng). Bấm nút Xong ở đơn bên dưới thì món tương
-            ứng tự trừ khỏi bảng này.
-          </p>
-          <div className="table-wrap">
-            <table className="table">
-              <thead>
-                <tr>
-                  <th>Món</th>
-                  <th style={{ textAlign: 'right' }}>Cần làm</th>
-                  <th style={{ textAlign: 'right' }}>Số đơn</th>
-                </tr>
-              </thead>
-              <tbody>
-                {kitchen.map((row) => (
-                  <tr key={row.key}>
-                    <td className="td-title">
-                      <strong>{row.name}</strong>
-                      <span className="muted small"> · {fmtVND(row.price)}</span>
-                      {row.options.length > 0 && (
-                        <div className="kitchen-opts">
-                          {row.options.map((o, k) => (
-                            <span key={k} className="kitchen-opt">
-                              + {o.name}
-                              {o.delta !== 0 && (
-                                <em className={o.delta < 0 ? 'opt-minus' : ''}>
-                                  {' '}
-                                  {o.delta > 0 ? '+' : '−'}
-                                  {fmtVND(Math.abs(o.delta))}
-                                </em>
-                              )}
-                            </span>
-                          ))}
-                        </div>
-                      )}
-                      {row.notes.length > 0 && (
-                        <div className="muted small">
-                          📝 {row.notes.join(' · ')}
-                        </div>
-                      )}
-                    </td>
-                    <td className="t-r" data-label="Cần làm">
-                      <span className="kitchen-qty">{row.qty}</span>
-                    </td>
-                    <td className="t-r muted small" data-label="Số đơn">
-                      {row.orders.length}
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        </section>
+      {/* ---- TAB: Món cần làm / Danh sách đơn ---- */}
+      <div className="chips" role="tablist">
+        <button
+          className={`chip ${tab === 'kitchen' ? 'chip-active' : ''}`}
+          onClick={() => setTab('kitchen')}
+          role="tab"
+          aria-selected={tab === 'kitchen'}
+        >
+          🔥 Món cần làm ({kitchen.length})
+        </button>
+        <button
+          className={`chip ${tab === 'orders' ? 'chip-active' : ''}`}
+          onClick={() => setTab('orders')}
+          role="tab"
+          aria-selected={tab === 'orders'}
+        >
+          🧾 Danh sách đơn ({counts.new + counts.preparing})
+        </button>
+      </div>
+
+      {tab === 'kitchen' && (
+        <>
+          {/* ---- 🔥 MÓN CẦN LÀM — gom tất cả món của đơn chưa xong ---- */}
+          {kitchen.length > 0 ? (
+            <section className="panel kitchen-panel">
+              <h2 className="panel-title">🔥 Món cần làm ({kitchen.length} món)</h2>
+              <p className="panel-hint">
+                Tổng hợp món của tất cả đơn chưa hoàn thành, đã tách theo tuỳ chọn (vd xôi
+                siêu to và xôi thường là 2 dòng riêng). Bấm nút Xong ở tab "Danh sách đơn" thì
+                món tương ứng tự trừ khỏi bảng này.
+              </p>
+              <div className="table-wrap">
+                <table className="table">
+                  <thead>
+                    <tr>
+                      <th>Món</th>
+                      <th style={{ textAlign: 'right' }}>Cần làm</th>
+                      <th style={{ textAlign: 'right' }}>Số đơn</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {kitchen.map((row) => (
+                      <tr key={row.key}>
+                        <td className="td-title">
+                          <strong>{row.name}</strong>
+                          <span className="muted small"> · {fmtVND(row.price)}</span>
+                          {row.options.length > 0 && (
+                            <div className="kitchen-opts">
+                              {row.options.map((o, k) => (
+                                <span key={k} className="kitchen-opt">
+                                  + {o.name}
+                                  {o.delta !== 0 && (
+                                    <em className={o.delta < 0 ? 'opt-minus' : ''}>
+                                      {' '}
+                                      {o.delta > 0 ? '+' : '−'}
+                                      {fmtVND(Math.abs(o.delta))}
+                                    </em>
+                                  )}
+                                </span>
+                              ))}
+                            </div>
+                          )}
+                          {row.notes.length > 0 && (
+                            <div className="muted small">
+                              📝 {row.notes.join(' · ')}
+                            </div>
+                          )}
+                        </td>
+                        <td className="t-r" data-label="Cần làm">
+                          <span className="kitchen-qty">{row.qty}</span>
+                        </td>
+                        <td className="t-r muted small" data-label="Số đơn">
+                          {row.orders.length}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </section>
+          ) : (
+            <div className="empty">
+              Không có món nào cần làm. Mọi đơn đã xong 🎉
+            </div>
+          )}
+        </>
       )}
 
-      <div className="chips">
+      {tab === 'orders' && (
+        <>
+          <div className="chips">
         {[
           { k: 'active', l: `Cần xử lý (${counts.new + counts.preparing})` },
           { k: 'new', l: 'Mới' },
@@ -396,13 +430,14 @@ export default function OrdersPage() {
                     onPrint={() => setPrinting(o)}
                     onPreview={() => setPreview(o)}
                     onTogglePaid={() => onTogglePaid(o)}
-                    onDelete={() => onDelete(o.id)}
                   />
                 </div>
               </article>
             )
           })}
         </div>
+      )}
+        </>
       )}
 
       {/* Xem trước hoá đơn (không in) */}
@@ -445,109 +480,47 @@ export default function OrdersPage() {
 }
 
 /* --------------------------------------------------------------- *
- * NÚT 3 CHẤM — gom mọi thao tác của 1 đơn vào 1 menu
+ * MENU THAO TÁC CỦA 1 ĐƠN
  *
- * Nút chính (Bắt đầu làm / Hoàn thành / In lại) nằm NGOÀI menu để
- * chủ quán bấm nhanh được. Menu 3 chấm chứa các thao tác phụ:
- *   - Bắt đầu / Hoàn thành (tuỳ trạng thái)
- *   - Đánh dấu đã thanh toán (đơn chuyển khoản)
- *   - In hoá đơn / Xem hoá đơn
- *   - Huỷ đơn
- *   - Xoá đơn (ĐỎ, nằm CUỐI danh sách)
+ * Nút chính (Bắt đầu làm / Hoàn thành / In lại) nằm NGOÀI menu để chủ quán
+ * bấm nhanh được. Menu 3 chấm chứa các thao tác phụ.
+ *
+ * VÌ SAO KHÔNG CÓ NÚT "XOÁ ĐƠN"?
+ *
+ *   Trước đây có cả "Huỷ đơn" lẫn "Xoá đơn" — thừa và gây rối:
+ *     - "Huỷ đơn"  = đơn không làm nữa nhưng VẪN CÒN trong lịch sử
+ *                     (đã xong việc ghi nhận, có thể đối chiếu doanh thu).
+ *     - "Xoá đơn"  = xoá hẳn khỏi DB, mất vĩnh viễn.
+ *
+ *   Chủ quán chỉ cần 1 thao tác cho trường hợp "khách đặt nhầm / đổi ý".
+ *   Đó là HUỶ — đơn vẫn nằm trong lịch sử, bấm "Tất cả" là thấy, không mất
+ *   số liệu. Xoá hẳn là thao tác nguy hiểm và hiếm khi cần, nên bỏ đi cho
+ *   gọn, tránh bấm nhầm xoá mất đơn.
  * --------------------------------------------------------------- */
-function OrderMenu({ order, onStart, onDone, onCancel, onPrint, onPreview, onTogglePaid, onDelete }) {
-  const [open, setOpen] = useState(false)
-  const wrapRef = useRef(null)
-
-  // Đóng menu khi bấm ra ngoài hoặc nhấn Esc.
-  useEffect(() => {
-    if (!open) return
-    const onDocDown = (e) => {
-      if (wrapRef.current && !wrapRef.current.contains(e.target)) setOpen(false)
-    }
-    const onKey = (e) => {
-      if (e.key === 'Escape') setOpen(false)
-    }
-    document.addEventListener('mousedown', onDocDown)
-    document.addEventListener('touchstart', onDocDown)
-    document.addEventListener('keydown', onKey)
-    return () => {
-      document.removeEventListener('mousedown', onDocDown)
-      document.removeEventListener('touchstart', onDocDown)
-      document.removeEventListener('keydown', onKey)
-    }
-  }, [open])
-
-  // Mọi thao tác đều đóng menu sau khi bấm.
-  const run = (fn) => () => {
-    setOpen(false)
-    fn()
-  }
-
+function OrderMenu({ order, onStart, onDone, onCancel, onPrint, onPreview, onTogglePaid }) {
   const isNew = order.status === 'new'
   const isPreparing = order.status === 'preparing'
   const isDone = order.status === 'done'
   const isCancelled = order.status === 'cancelled'
   const isTransfer = order.payment_method === 'transfer'
 
-  return (
-    <div className="order-menu" ref={wrapRef}>
-      <button
-        className={`btn btn-sm btn-icon-menu ${open ? 'btn-icon-menu-on' : ''}`}
-        onClick={() => setOpen((v) => !v)}
-        aria-haspopup="menu"
-        aria-expanded={open}
-        title="Tuỳ chọn khác"
-        aria-label="Tuỳ chọn khác"
-      >
-        ⋮
-      </button>
+  // Gom danh sách thao tác phụ, theo trạng thái đơn.
+  const items = []
+  if (isNew) items.push({ label: 'Bắt đầu làm', icon: '▶️', onClick: onStart })
+  if (isPreparing) items.push({ label: 'Hoàn thành', icon: '✅', onClick: onDone })
+  if (isTransfer) {
+    items.push({
+      label: order.is_paid ? 'Bỏ đánh dấu đã trả' : 'Đã thanh toán',
+      icon: order.is_paid ? '↩️' : '💰',
+      onClick: onTogglePaid,
+    })
+  }
+  items.push({ label: 'In hoá đơn', icon: '🖨️', onClick: onPrint })
+  if (isDone) items.push({ label: 'Xem hoá đơn', icon: '📄', onClick: onPreview })
+  // Chỉ đơn CHƯA XONG mới huỷ được (đơn đã xong rồi thì không huỷ nữa).
+  if (!isDone && !isCancelled) {
+    items.push({ label: 'Huỷ đơn', icon: '✖️', danger: true, onClick: onCancel })
+  }
 
-      {open && (
-        <div className="order-menu-pop" role="menu">
-          {isNew && (
-            <button className="order-menu-item" role="menuitem" onClick={run(onStart)}>
-              ▶️ Bắt đầu làm
-            </button>
-          )}
-          {isPreparing && (
-            <button className="order-menu-item" role="menuitem" onClick={run(onDone)}>
-              ✅ Hoàn thành
-            </button>
-          )}
-          {isTransfer && (
-            <button className="order-menu-item" role="menuitem" onClick={run(onTogglePaid)}>
-              {order.is_paid ? '↩️ Bỏ đánh dấu đã trả' : '💰 Đã thanh toán'}
-            </button>
-          )}
-          {isDone ? (
-            <>
-              <button className="order-menu-item" role="menuitem" onClick={run(onPrint)}>
-                🖨️ In hoá đơn
-              </button>
-              <button className="order-menu-item" role="menuitem" onClick={run(onPreview)}>
-                📄 Xem hoá đơn
-              </button>
-            </>
-          ) : (
-            <button className="order-menu-item" role="menuitem" onClick={run(onPrint)}>
-              🖨️ In hoá đơn
-            </button>
-          )}
-          {!isDone && !isCancelled && (
-            <button className="order-menu-item" role="menuitem" onClick={run(onCancel)}>
-              ✖️ Huỷ đơn
-            </button>
-          )}
-          <button
-            className="order-menu-item order-menu-item-danger"
-            role="menuitem"
-            onClick={run(onDelete)}
-          >
-            🗑️ Xoá đơn
-          </button>
-        </div>
-      )}
-    </div>
-  )
+  return <RowMenu items={items} />
 }

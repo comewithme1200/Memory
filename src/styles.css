@@ -1631,6 +1631,17 @@ a {
   animation: pop 0.14s ease;
 }
 
+/* Menu 3 chấm dùng `position: fixed` — thoát khỏi vùng `overflow` của
+   `.table-wrap` (bảng admin cuộn ngang) để không bị CẮT mất đầu menu.
+   Toạ độ được tính bằng JS trong RowMenu.jsx. */
+.order-menu-pop-fixed {
+  position: fixed;
+  right: auto;
+  bottom: auto;
+  /* z-index rất cao: nằm trên mọi panel/table của trang quản trị */
+  z-index: 200;
+}
+
 .order-menu-item {
   width: 100%;
   text-align: left;
@@ -2616,7 +2627,8 @@ a {
   }
 
   /* Menu 3 chấm: mở rộng, dễ bấm */
-  .order-menu-pop {
+  .order-menu-pop,
+  .order-menu-pop-fixed {
     min-width: 210px;
   }
 

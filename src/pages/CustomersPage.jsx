@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import QRCode from 'qrcode'
 import QrPrintPortal from '../components/QrPrintPortal.jsx'
+import RowMenu from '../components/RowMenu.jsx'
 import {
   listCustomers,
   createCustomer,
@@ -294,26 +295,37 @@ export default function CustomersPage() {
                       </span>
                     </td>
                     <td className="t-r">
+                      {/* Menu 3 chấm — gom thao tác cho gọn, giống danh sách đơn.
+                          Nút chính "Xem QR" nằm ngoài để bấm nhanh, phần còn lại
+                          (tải ảnh / sửa / tạo lại QR / xoá) nằm trong menu. */}
                       <div className="btn-row btn-row-end">
-                        <button className="btn btn-sm btn-primary" onClick={() => setQrFor(c)}>
+                        <button
+                          className="btn btn-sm btn-primary"
+                          onClick={() => setQrFor(c)}
+                        >
                           📱 Xem QR
                         </button>
-                        <button
-                          className="btn btn-sm btn-ghost"
-                          onClick={() => downloadQr(c)}
-                          title="Tải ảnh QR để gửi khách qua Zalo"
-                        >
-                          ⬇️ Ảnh
-                        </button>
-                        <button className="btn btn-sm" onClick={() => startEdit(c)}>
-                          Sửa
-                        </button>
-                        <button className="btn btn-sm btn-ghost" onClick={() => onRegenerate(c)}>
-                          Tạo lại QR
-                        </button>
-                        <button className="btn btn-sm btn-danger" onClick={() => onDelete(c)}>
-                          Xoá
-                        </button>
+                        <RowMenu
+                          items={[
+                            {
+                              label: 'Tải ảnh QR',
+                              icon: '⬇️',
+                              onClick: () => downloadQr(c),
+                            },
+                            { label: 'Sửa thông tin', icon: '✏️', onClick: () => startEdit(c) },
+                            {
+                              label: 'Tạo lại mã QR',
+                              icon: '🔄',
+                              onClick: () => onRegenerate(c),
+                            },
+                            {
+                              label: 'Xoá khách',
+                              icon: '🗑️',
+                              danger: true,
+                              onClick: () => onDelete(c),
+                            },
+                          ]}
+                        />
                       </div>
                     </td>
                   </tr>
