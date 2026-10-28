@@ -17,9 +17,12 @@ const EMPTY = { name: '', phone: '', address: '', note: '', is_active: true }
  * không nhúng thẳng tên/SĐT/địa chỉ, vì:
  *   - URL ngắn -> QR dễ quét, ít lỗi khi in
  *   - không lộ SĐT/địa chỉ khách trong lịch sử trình duyệt và log máy chủ
+ *
+ * Lưu ý: `pathname` trên GitHub Pages là `/Memory/` (có dấu `/` cuối) -> phải
+ * cắt bớt để không sinh ra `//` trong URL.
  */
 const qrUrlFor = (token) => {
-  const base = `${window.location.origin}${window.location.pathname}`
+  const base = `${window.location.origin}${window.location.pathname.replace(/\/+$/, '')}`
   return `${base}/#/?qr=${token}`
 }
 
