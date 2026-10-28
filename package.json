@@ -9,6 +9,7 @@
     "build": "vite build",
     "preview": "vite preview --port 4173",
     "check": "node scripts/check-supabase.mjs",
+    "verify:migration": "node scripts/verify-migration.mjs",
     "deploy": "npm run build && gh-pages -d dist"
   },
   "dependencies": {

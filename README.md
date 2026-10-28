@@ -78,7 +78,8 @@ Mở trình duyệt tại: **http://localhost:5173**
 | `npm run dev` | Chạy dev server (có hot reload) |
 | `npm run build` | Build ra thư mục `dist/` để deploy |
 | `npm run preview` | Xem bản build tại http://localhost:4173 |
-| `npm run check` | Kiểm tra kết nối Supabase + hành vi RLS |
+| `npm run check` | Kiểm tra kết nối Supabase + hành vi RLS (gồm cả bảng trung gian) |
+| `npm run verify:migration` | So khớp dữ liệu đơn cũ (JSONB) với bảng `order_items` |
 | `npm run deploy` | Build + đẩy lên GitHub Pages (cần `gh-pages`) |
 
 **Dừng server:** nhấn `Ctrl + C` trong terminal.
@@ -113,6 +114,50 @@ Mở trình duyệt tại: **http://localhost:5173**
 > - `authenticated` (chủ quán đã đăng nhập) → **toàn quyền**
 >
 > Kiểm tra: menu **Table Editor** → thấy 2 bảng `menu_items`, `orders`, trong `menu_items` có 6 món mẫu.
+
+### Bước 2b — (Nâng cấp) Tách bảng trung gian `order_items`
+
+> Bước này là **tuỳ chọn**. Nếu bạn chỉ dùng app với quán nhỏ, bỏ qua vẫn chạy bình thường.
+
+Ban đầu các món trong đơn được lưu dạng JSONB trong cột `orders.items`. Bước này chuyển sang
+**bảng trung gian `order_items`** — mô hình hoá đúng quan hệ nhiều-nhiều giữa đơn và món:
+
+1. Vào **SQL Editor** → **New query**
+2. Dán toàn bộ nội dung file [`supabase/migration-order-items.sql`](supabase/migration-order-items.sql)
+3. Bấm **Run**
+
+Script này:
+- tạo bảng `order_items` (+ index, + RLS: khách **không** được đọc, chủ quán toàn quyền)
+- tạo RPC `create_order(...)` — ghi đơn + dòng món trong **một transaction**
+- tạo RPC `summarize_orders(...)` — tổng kết bằng `GROUP BY` ngay trong SQL
+- **migrate** các đơn cũ từ JSONB sang bảng mới (chạy lại không tạo trùng)
+
+> ⚠️ Cột `orders.items` (JSONB) **không bị xoá** — giữ lại để rollback an toàn.
+> Script chạy được nhiều lần (idempotent).
+
+### Bước 2c — (Quan trọng) Siết quyền & sửa kiểu trả về
+
+Hai file SQL sau đã được viết sẵn để vá các lỗi bảo mật/tính đúng đã phát hiện
+khi kiểm thử. Chạy cả hai trong SQL Editor:
+
+| File | Sửa gì |
+|---|---|
+| [`supabase/fix-summarize-permissions.sql`](supabase/fix-summarize-permissions.sql) | Gỡ quyền `EXECUTE` của `summarize_orders` cho `anon` — nếu không, **khách đọc được doanh thu của quán** |
+| [`supabase/fix-create-order-return.sql`](supabase/fix-create-order-return.sql) | Đổi `create_order` từ trả `uuid` sang trả `jsonb` (kèm `total` đã tính ở server + món đã chốt) → màn hình "đặt món thành công" hiện đúng số tiền |
+
+> Lý do phải `revoke` cho `anon` **riêng** (không chỉ `from public`): `anon` là
+> thành viên của role `public`, nên `revoke ... from public` **không** đủ.
+> Chi tiết ở mục *Trợ giúp → Bẫy bảo mật #3*.
+
+Sau khi chạy, kiểm tra bằng `npm run check`:
+```
+PHẦN A — Khách (anon key) — đúng như trình duyệt của khách
+  OK   RLS chặn đúng: khách không xem được tổng kết (doanh thu)
+  ...
+PHẦN A2 — Bảng trung gian order_items
+  OK   RLS chặn đúng: khách không đọc được dòng món của đơn (0 dòng)
+  OK   Khách tạo đơn qua RPC create_order được
+```
 
 ### Bước 3 — Tạo tài khoản chủ quán
 
@@ -289,9 +334,13 @@ Bấm **"🖨️ In lại"** ở đơn đã hoàn thành để in lại.
 ├── .env.example               # File mẫu biến môi trường
 ├── supabase/
 │   ├── schema.sql             # SQL tạo bảng + RLS + dữ liệu mẫu
+│   ├── migration-order-items.sql  # (Nâng cấp) tách bảng trung gian order_items
+│   ├── fix-summarize-permissions.sql  # Gỡ quyền xem doanh thu cho khách
+│   ├── fix-create-order-return.sql   # Đổi create_order trả về jsonb
 │   └── cleanup-test-data.sql  # Xoá đơn/món rác do script kiểm tra tạo ra
 ├── scripts/
-│   └── check-supabase.mjs     # Kiểm tra kết nối + RLS (npm run check)
+│   ├── check-supabase.mjs     # Kiểm tra kết nối + RLS (npm run check)
+│   └── verify-migration.mjs   # So khớp đơn cũ vs order_items (npm run verify:migration)
 └── src/
     ├── main.jsx               # Gốc ứng dụng
     ├── App.jsx                # Định tuyến (HashRouter cho GitHub Pages)
@@ -349,8 +398,54 @@ Bấm **"🖨️ In lại"** ở đơn đã hoàn thành để in lại.
   - Bấm **"−"** để bỏ 1 phần (bỏ hết thì dòng tự biến mất khỏi giỏ).
   - Nút **"−"** trên thẻ món ở trang thực đơn cũng bỏ được món khỏi giỏ.
   - Ghi chú hiện ở: trang đặt món (xác nhận), trang **Đơn hàng** (bếp đọc) và trên **hoá đơn in 80mm**.
-  - Lưu trong trường JSONB `items` của bảng `orders` → **không cần đổi cấu trúc database**.
+  - Lưu ở bảng trung gian `order_items` (mỗi dòng món = 1 row) — xem phần *Cấu trúc dữ liệu* bên dưới.
 - **Mã đơn** gồm 3 chữ + 3 số (vd `EMW315`) để bếp gọi khách.
+
+---
+
+## 🗃️ Cấu trúc dữ liệu (quan hệ nhiều-nhiều)
+
+**1 món có thể nằm trong nhiều đơn, 1 đơn có thể chứa nhiều món** → quan hệ nhiều-nhiều.
+Được mô hình hoá bằng **bảng trung gian `order_items`**:
+
+```
+menu_items                 orders                    order_items
+┌──────────────┐          ┌──────────────┐          ┌────────────────────┐
+│ id (PK)      │◄─────────┤ id (PK)      │◄─────────┤ order_id (FK)      │
+│ name         │          │ code         │          │ menu_item_id (FK)  │
+│ price        │          │ customer_name│          │ name_snapshot      │
+│ is_available │          │ total        │          │ price_snapshot     │
+│ ...          │          │ status       │          │ qty                │
+└──────────────┘          │ created_at   │          │ note               │
+                          └──────────────┘          └────────────────────┘
+```
+
+| Bảng | Vai trò |
+|---|---|
+| `menu_items` | Thực đơn — món ăn và giá hiện tại |
+| `orders` | Đơn hàng — thông tin khách, tổng tiền, trạng thái |
+| `order_items` | **Bảng trung gian** — từng dòng món của từng đơn |
+
+**Vì sao `order_items` cần `name_snapshot` / `price_snapshot`?**
+Đây là **bản chụp** tên và giá **tại thời điểm khách đặt món**. Nếu chỉ join lấy từ
+`menu_items`, thì khi bạn sửa giá món tuần sau, toàn bộ lịch sử doanh thu và các hoá đơn
+đã in sẽ bị đổi theo — sai. Vì vậy giá trong đơn **không bao giờ** lấy từ thực đơn lúc báo cáo.
+
+**Ràng buộc:**
+- Xoá đơn → `order_items` bị xoá theo (`ON DELETE CASCADE`)
+- Xoá món khỏi thực đơn → `menu_item_id` thành `NULL`, nhưng đơn cũ **vẫn giữ** đúng tên/giá đã chốt (`ON DELETE SET NULL`)
+
+**Hai chế độ lưu trữ:**
+
+| | Chế độ cũ (mặc định) | Chế độ mới (sau migration) |
+|---|---|---|
+| Nơi lưu món | cột JSONB `orders.items` | bảng `order_items` |
+| Tạo đơn | 1 `INSERT` | RPC `create_order` (1 transaction) |
+| Tổng kết | gom trong JavaScript | RPC `summarize_orders` (`GROUP BY` trong SQL) |
+| Rollback | — | xoá bảng `order_items`, app tự fallback về JSONB |
+
+App tự phát hiện: nếu bảng `order_items` / RPC chưa có trong DB, nó **tự động dùng đường cũ**
+→ chạy được ngay cả khi chưa chạy migration.
 
 ---
 
@@ -375,6 +470,30 @@ Policy sai **không** luôn sinh lỗi. Ví dụ `UPDATE` bảng mà policy khô
 tưởng là đã thành công. Vì vậy `npm run check` luôn kiểm tra **cả** `error`
 **và** số dòng trả về.
 
+**3. `revoke ... from public` KHÔNG đủ — phải revoke cho `anon` riêng**
+
+`anon` là một thành viên của role `public`. Nên câu lệnh:
+```sql
+revoke all on function public.summarize_orders(timestamptz, timestamptz) from public;
+```
+**vẫn để lại** khả năng khách gọi được hàm. Phải revoke thêm:
+```sql
+revoke all on function public.summarize_orders(timestamptz, timestamptz) from anon;
+```
+Và nhớ xử lý **cả overload 0 tham số** (do các tham số có `default` tạo ra):
+```sql
+revoke all on function public.summarize_orders() from anon;
+```
+
+Nếu quên, khách gõ `/#/quan-tri/tong-ket` là đọc được **doanh thu** của quán —
+`npm run check` sẽ bắt được lỗi này (mục *"khách đọc được tổng kết"*).
+
+**4. Không tin giá do client gửi lên**
+
+RPC `create_order` **tính lại tổng tiền** từ bảng `menu_items` thay vì lấy `price`
+mà trình duyệt gửi lên. Nếu tin giá của client, khách chỉ cần sửa 1 request là
+đặt được món giá 0đ.
+
 ### Sự cố thường gặp
 
 | Lỗi | Cách sửa |
@@ -392,3 +511,5 @@ tưởng là đã thành công. Vì vậy `npm run check` luôn kiểm tra **c�
 | Điện thoại không mở được Network URL | Kiểm tra cùng Wi‑Fi, tắt tạm tường lửa/VPN |
 | Không in được | Chọn đúng máy in nhiệt 80mm, kiểm tra khổ giấy = Receipt |
 | Còn đơn test trong DB | Chạy `supabase/cleanup-test-data.sql` trong SQL Editor |
+| `npm run check` báo *"khách đọc được tổng kết + doanh thu"* | Chạy `supabase/fix-summarize-permissions.sql` — gỡ quyền EXECUTE của `summarize_orders` cho `anon` |
+| `Could not find the table 'public.order_items'` | PostgREST chưa refresh schema cache → đợi vài giây rồi chạy lại, hoặc reload trang. Nếu vẫn lỗi thì chạy `supabase/migration-order-items.sql` |

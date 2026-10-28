@@ -173,26 +173,90 @@ export async function deleteMenuItem(id) {
 
 /* ---------------------------- ORDERS ---------------------------- */
 
-export async function listOrders({ from, to } = {}) {
+export async function listOrders({ from, to, limit } = {}) {
   if (!supabase) {
     let orders = readLocal().orders
     if (from) orders = orders.filter((o) => new Date(o.created_at) >= new Date(from))
     if (to) orders = orders.filter((o) => new Date(o.created_at) <= new Date(to))
-    return orders.slice().sort((a, b) => new Date(b.created_at) - new Date(a.created_at))
+    orders = orders.slice().sort((a, b) => new Date(b.created_at) - new Date(a.created_at))
+    return limit ? orders.slice(0, limit) : orders
   }
   let q = supabase.from('orders').select('*').order('created_at', { ascending: false })
   if (from) q = q.gte('created_at', new Date(from).toISOString())
   if (to) q = q.lte('created_at', new Date(to).toISOString())
+  // Giới hạn số đơn tải về: trang đơn hàng tự làm mới mỗi 15s, tải toàn bộ
+  // lịch sử sẽ nặng dần theo thời gian.
+  if (limit) q = q.limit(limit)
   const { data, error } = await q
   if (error) throw new Error(friendlyError(error, 'Tải danh sách đơn'))
-  return data || []
+  const orders = data || []
+  if (orders.length === 0) return orders
+
+  // Gắn món từ bảng trung gian `order_items`.
+  // Nếu bảng này chưa tồn tại (chưa chạy migration) -> dùng luôn JSONB cũ.
+  const byOrder = await fetchOrderItems(orders.map((o) => o.id))
+  return orders.map((o) => {
+    const items = byOrder.get(o.id)
+    // `items` rỗng -> đơn cũ chưa được migrate -> đọc JSONB legacy
+    if (!items || items.length === 0) return o
+    return { ...o, items }
+  })
+}
+
+/**
+ * Lấy dòng món của các đơn từ bảng `order_items`, gom theo order_id.
+ *
+ * Trả về Map<orderId, items[]> với items đã đổi tên cột cho khớp giao diện:
+ *   name_snapshot -> name, price_snapshot -> price.
+ *
+ * Nếu bảng `order_items` chưa tồn tại (chưa chạy migration) -> Map rỗng,
+ * caller tự fallback sang JSONB `orders.items`.
+ */
+async function fetchOrderItems(orderIds) {
+  const map = new Map()
+  if (!orderIds.length) return map
+
+  // Chia nhỏ danh sách id: URL query có giới hạn độ dài, `.in()` với hàng
+  // nghìn uuid sẽ tạo URL quá dài -> PostgREST trả lỗi 414.
+  const CHUNK = 100
+  for (let i = 0; i < orderIds.length; i += CHUNK) {
+    const chunk = orderIds.slice(i, i + CHUNK)
+    const { data, error } = await supabase
+      .from('order_items')
+      .select('order_id, menu_item_id, name_snapshot, price_snapshot, qty, note')
+      .in('order_id', chunk)
+      .order('created_at', { ascending: true })
+    if (error) {
+      // Bảng chưa tồn tại -> âm thầm dùng JSONB cũ.
+      if (/does not exist|could not find|not found|schema cache/i.test(error.message || '')) return map
+      throw new Error(friendlyError(error, 'Tải món của đơn'))
+    }
+    for (const r of data || []) {
+      const list = map.get(r.order_id) || []
+      list.push({
+        id: r.menu_item_id,
+        name: r.name_snapshot,
+        price: r.price_snapshot,
+        qty: r.qty,
+        note: r.note || '',
+      })
+      map.set(r.order_id, list)
+    }
+  }
+  return map
 }
 
 /**
  * Tạo đơn. `items` là mảng { id, name, price, qty, note } đã chốt giá tại thời điểm đặt.
  *
- * Mỗi món có thể kèm `note` riêng (vd "không da gà, thêm ớt") — ghi chú này
- * lưu trong `items` (jsonb) nên KHÔNG cần đổi cấu trúc bảng `orders`.
+ * Mỗi món có thể kèm `note` riêng (vd "không da gà, thêm ớt").
+ *
+ * Nơi lưu:
+ * - Supabase: RPC `create_order` -> ghi vào bảng trung gian `order_items`
+ *   (mỗi dòng món là 1 row, có `name_snapshot` / `price_snapshot` chốt giá).
+ * - Local (demo): mảng JSON trong localStorage.
+ *
+ * Cột `orders.items` (jsonb) vẫn được giữ làm legacy để rollback an toàn.
  */
 export async function createOrder(order) {
   const items = order.items.map((it) => ({
@@ -222,6 +286,13 @@ export async function createOrder(order) {
       return row
     })
   }
+
+  // --- Đường mới: RPC create_order (ghi orders + order_items trong 1 transaction)
+  // Nếu hàm RPC chưa được tạo trong DB (chưa chạy migration), ta phát hiện
+  // và dùng đường cũ (insert thẳng vào bảng orders) để app vẫn chạy được.
+  const viaRpc = await tryCreateOrderRpc(payload)
+  if (viaRpc) return viaRpc
+
   // KHÔNG dùng .insert(payload).select().single() ở đây!
   // Policy RLS cho `anon` chỉ cho phép INSERT vào bảng `orders`, KHÔNG cho phép
   // SELECT. Khi kèm .select(), PostgREST gửi `Prefer: return=representation`
@@ -235,6 +306,70 @@ export async function createOrder(order) {
   const { error } = await supabase.from('orders').insert(row)
   if (error) throw new Error(friendlyError(error, 'Đặt hàng'))
   return { ...row, created_at: new Date().toISOString(), completed_at: null }
+}
+
+/**
+ * Gọi RPC `create_order` — đường ưu tiên (bảng trung gian `order_items`).
+ *
+ * Trả về `null` nếu hàm RPC chưa tồn tại trong DB (chưa chạy
+ * `supabase/migration-order-items.sql`) -> caller dùng đường insert thẳng.
+ *
+ * LƯU Ý: KHÔNG dùng `.select()` sau `.rpc()`.
+ * PostgREST gửi `Prefer: return=representation` -> Postgres phải đọc lại dòng
+ * vừa insert -> policy của `anon` không cho SELECT bảng `orders` -> RLS chặn
+ * -> đơn KHÔNG được lưu.
+ *
+ * HÀM CÓ 2 PHIÊN BẢN (tự phát hiện theo hình dạng kết quả):
+ *   - Cũ: trả về `uuid` (chỉ id đơn). Ta tự dựng object, tổng tiền lấy từ
+ *     client -> có thể lệch nếu giá món đã đổi.
+ *   - MỚI: trả về `jsonb` { id, code, total, items } — server đã tính sẵn
+ *     và chốt tên/giá -> client hiển thị khớp 100% với DB.
+ */
+async function tryCreateOrderRpc(payload) {
+  const { data, error } = await supabase.rpc('create_order', {
+    p_code: payload.code,
+    p_customer_name: payload.customer_name,
+    p_customer_phone: payload.customer_phone,
+    p_table_no: payload.table_no,
+    p_note: payload.note,
+    p_items: payload.items,
+  })
+  if (error) {
+    // Hàm chưa tồn tại -> dùng đường cũ. Các lỗi khác thì ném ra.
+    if (/does not exist|could not find|not found|schema cache/i.test(error.message || '')) return null
+    throw new Error(friendlyError(error, 'Đặt hàng'))
+  }
+  if (!data) return null
+
+  const base = {
+    code: payload.code,
+    customer_name: payload.customer_name,
+    customer_phone: payload.customer_phone,
+    table_no: payload.table_no,
+    note: payload.note,
+    status: 'new',
+    created_at: new Date().toISOString(),
+    completed_at: null,
+  }
+
+  // Phiên bản mới: server trả về jsonb đầy đủ
+  if (typeof data === 'object' && data !== null && data.id) {
+    return {
+      ...base,
+      id: data.id,
+      code: data.code || payload.code,
+      total: Number(data.total) || 0,
+      items: Array.isArray(data.items) && data.items.length ? data.items : payload.items,
+    }
+  }
+
+  // Phiên bản cũ: server trả về uuid
+  return {
+    ...base,
+    id: data,
+    items: payload.items,
+    total: payload.total,
+  }
 }
 
 export async function updateOrderStatus(id, status) {
@@ -278,8 +413,36 @@ export async function deleteOrder(id) {
  * Đơn đã huỷ thì không tính; các đơn còn lại (mới / đang làm / hoàn thành) đều tính
  * vì khách đã đặt => bếp vẫn phải chuẩn bị.
  * Trả về: { rows: [{ id, name, qty, revenue }], totalQty, totalRevenue, orderCount }
+ *
+ * ƯU TIÊN: RPC `summarize_orders` -> GROUP BY ngay trong SQL, KHÔNG tải đơn về JS.
+ * Nếu hàm chưa tồn tại (chưa chạy migration) -> fallback gom trong JS.
  */
 export async function summarize({ from, to } = {}) {
+  if (supabase) {
+    const { data, error } = await supabase.rpc('summarize_orders', {
+      p_from: from ? new Date(from).toISOString() : null,
+      p_to: to ? new Date(to).toISOString() : null,
+    })
+    if (!error && data) {
+      const rows = (data.rows || []).map((r) => ({
+        id: r.id,
+        name: r.name,
+        qty: Number(r.qty) || 0,
+        revenue: Number(r.revenue) || 0,
+      }))
+      return {
+        rows,
+        totalQty: Number(data.totalQty) || 0,
+        totalRevenue: Number(data.totalRevenue) || 0,
+        orderCount: Number(data.orderCount) || 0,
+      }
+    }
+    // Hàm chưa tồn tại -> rơi xuống đường gom trong JS bên dưới.
+    if (error && !/does not exist|could not find|not found|schema cache/i.test(error.message || '')) {
+      throw new Error(friendlyError(error, 'Tổng kết số lượng'))
+    }
+  }
+
   const orders = await listOrders({ from, to })
   const map = new Map()
   let totalRevenue = 0

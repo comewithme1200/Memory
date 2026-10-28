@@ -21,7 +21,7 @@ export default function OrdersPage() {
 
   const reload = useCallback(
     () =>
-      listOrders()
+      listOrders({ limit: 200 })
         .then(setOrders)
         .catch((e) => setError(e.message || 'Không tải được danh đơn'))
         .finally(() => setLoading(false)),

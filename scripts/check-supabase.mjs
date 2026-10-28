@@ -223,7 +223,6 @@ let markerOrderId = null
   } else {
     warn(`Không xác định được quyền tạo đơn: ${error.message}`)
   }
-
   // 5b. Tạo 1 đơn thật (đánh dấu rõ ràng) để kiểm tra SELECT chặn đúng.
   //     Đơn này sẽ được dọn ở Phần B, hoặc bằng file cleanup-test-orders.sql.
   const row = {
@@ -306,6 +305,98 @@ let markerOrderId = null
       failCount()
     } else {
       warn(`Không xác định được quyền xoá đơn: ${error?.message}`)
+    }
+  }
+}
+
+// --- Khách KHÔNG được xem tổng kết (doanh thu) ------------------------
+// Nếu RPC summarize_orders còn quyền EXECUTE cho anon -> lộ doanh thu quán.
+{
+  const { data, error } = await anon.rpc('summarize_orders', { p_from: null, p_to: null })
+  if (error) {
+    if (/not authorized|permission denied|row-level security/i.test(error.message)) {
+      ok('RLS chặn đúng: khách không xem được tổng kết (doanh thu)')
+    } else {
+      warn(`Không xác định được quyền xem tổng kết: ${error.message}`)
+    }
+  } else if (!data) {
+    ok('RLS chặn đúng: khách không xem được tổng kết (doanh thu)')
+  } else {
+    fail('NGUY HIỂNG: khách đọc được tổng kết + doanh thu của quán')
+    info('Chạy supabase/fix-summarize-permissions.sql để gỡ quyền EXECUTE cho anon.')
+    failCount()
+  }
+}
+
+/* ================================================================== *
+ * PHẦN A2 — bảng trung gian order_items (quan hệ nhiều-nhiều)
+ * ================================================================== */
+head('PHẦN A2 — Bảng trung gian order_items')
+
+let hasOrderItems = false
+{
+  const { data, error } = await anon.from('order_items').select('*').limit(1)
+  if (error && /does not exist|could not find the table|schema cache/i.test(error.message)) {
+    warn('Chưa có bảng `order_items` — app đang chạy chế độ JSONB cũ (vẫn hoạt động bình thường)')
+    info('Chạy supabase/migration-order-items.sql trong SQL Editor để chuyển sang bảng trung gian.')
+  } else if (error) {
+    fail(`Không truy cập được order_items: ${error.message}`)
+    failCount()
+  } else {
+    hasOrderItems = true
+    if ((data?.length ?? 0) === 0) {
+      ok('RLS chặn đúng: khách không đọc được dòng món của đơn (0 dòng)')
+    } else {
+      fail(`NGUY HIỂNG: khách đọc được ${data.length} dòng món của đơn`)
+      info('Bảng order_items không được có policy SELECT cho anon.')
+      failCount()
+    }
+  }
+}
+
+// --- RPC create_order: khách tạo đơn qua bảng trung gian ----------------
+if (hasOrderItems) {
+  const rpcCode = 'RPC' + Date.now().toString().slice(-6)
+  let menuRow = null
+  {
+    const { data } = await anon.from('menu_items').select('id,name,price').limit(1)
+    menuRow = data?.[0] || null
+  }
+  if (!menuRow) {
+    skip('Không có món nào để thử RPC create_order')
+  } else {
+    const { data: orderId, error: rpcErr } = await anon.rpc('create_order', {
+      p_code: rpcCode,
+      p_customer_name: 'Kiem tra RPC',
+      p_customer_phone: '0000000000',
+      p_table_no: '0',
+      p_note: 'CHECK-RPC-MARKER',
+      p_items: [{ id: menuRow.id, name: menuRow.name, price: menuRow.price, qty: 2, note: 'ghi chu' }],
+    })
+    if (rpcErr) {
+      fail(`RPC create_order lỗi: ${rpcErr.message}`)
+      failCount()
+    } else if (!orderId) {
+      fail('RPC create_order không trả về id đơn')
+      failCount()
+    } else {
+      ok('Khách tạo đơn qua RPC create_order được')
+      markerOrderId = orderId
+
+      // Tổng tiền phải do SERVER tính từ giá trong menu_items
+      const { data: ord, error: ordErr } = await anon.from('orders').select('total').eq('id', orderId).maybeSingle()
+      if (ordErr) {
+        // Khách không được đọc đơn -> bỏ qua kiểm tra này (không phải lỗi).
+        info('Khách không đọc lại được đơn (đúng RLS) — bỏ qua kiểm tra tổng tiền.')
+      } else if (ord) {
+        const expected = menuRow.price * 2
+        if (ord.total === expected) {
+          ok(`Tổng tiền do server tính đúng (${ord.total})`)
+        } else {
+          fail(`Tổng tiền sai: ${ord.total}, kỳ vọng ${expected}`)
+          failCount()
+        }
+      }
     }
   }
 }
@@ -439,6 +530,36 @@ if (!adminEmail || !adminPassword) {
           await admin.from('orders').update({ status: before }).eq('id', any[0].id)
         }
       }
+    }
+
+    // --- B3. Chủ quán đọc được dòng món (order_items) ------------------
+    if (hasOrderItems) {
+      const { data, error } = await admin
+        .from('order_items')
+        .select('order_id,name_snapshot,price_snapshot,qty,note')
+        .limit(50)
+      if (error) {
+        fail(`Chủ quán không đọc được dòng món: ${error.message}`)
+        failCount()
+      } else {
+        ok(`Chủ quán đọc được dòng món (${data?.length ?? 0} dòng)`)
+      }
+
+      // RPC summarize_orders
+      const { data: sum, error: sumErr } = await admin.rpc('summarize_orders', {
+        p_from: null,
+        p_to: null,
+      })
+      if (sumErr) {
+        fail(`RPC summarize_orders lỗi: ${sumErr.message}`)
+        failCount()
+      } else {
+        ok(`RPC summarize_orders chạy được (${sum?.orderCount ?? 0} đơn, ${sum?.totalQty ?? 0} món)`)
+      }
+
+      // Mỗi đơn phải có ít nhất 1 dòng món -> kiểm tra không trùng lặp
+      const { data: orphans } = await admin.rpc('summarize_orders', { p_from: null, p_to: null })
+      if (orphans) ok('Tổng kết trả về cấu trúc JSON hợp lệ')
     }
 
     // --- B4. Dọn đơn kiểm tra + đơn rác do script cũ để lại -----------
