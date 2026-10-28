@@ -867,6 +867,14 @@ a {
   background: #fff;
 }
 
+/* Tên khách hiện ngay dưới mã QR — khách biết đây là mã của mình */
+.qr-name {
+  margin-top: 10px;
+  font-size: 17px;
+  font-weight: 800;
+  color: var(--ink);
+}
+
 .qr-hint {
   font-size: 13px;
   color: var(--ink-2);
@@ -1468,6 +1476,42 @@ a {
   @page {
     size: 80mm auto;
     margin: 4mm;
+  }
+}
+
+/* ------------------------------ PRINT QR --------------------------- */
+/* In mã QR khách quen: chỉ in mã + tên, không in giao diện admin.
+   Dùng class `printing-qr` trên <body> để không đụng vào style in hoá đơn. */
+@media print {
+  body.printing-qr * {
+    visibility: hidden;
+  }
+
+  body.printing-qr #qr-print-area,
+  body.printing-qr #qr-print-area * {
+    visibility: visible;
+  }
+
+  body.printing-qr #qr-print-area {
+    position: absolute;
+    left: 0;
+    top: 0;
+    width: 100%;
+    text-align: center;
+  }
+
+  body.printing-qr #qr-print-area.qr-image {
+    border: none;
+    border-radius: 0;
+    padding: 0;
+    max-width: 10cm;
+    width: 10cm;
+    image-rendering: pixelated;
+  }
+
+  @page {
+    size: auto;
+    margin: 8mm;
   }
 }
 

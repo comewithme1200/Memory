@@ -33,6 +33,61 @@ export default function CustomersPage() {
   // Khách đang xem QR (mở modal)
   const [qrFor, setQrFor] = useState(null)
   const [qrDataUrl, setQrDataUrl] = useState('')
+  const [copied, setCopied] = useState(false)
+
+  /** Copy đường dẫn QR vào clipboard (để gửi link cho khách). */
+  const copyLink = async (token) => {
+    const url = qrUrlFor(token)
+    try {
+      await navigator.clipboard.writeText(url)
+      setCopied(true)
+      setTimeout(() => setCopied(false), 2000)
+    } catch {
+      // Trình duyệt chặn clipboard (http, hoặc không có quyền) -> cho xem tay
+      window.prompt('Copy đường dẫn này để gửi cho khách:', url)
+    }
+  }
+
+  /**
+   * Tải ảnh QR của 1 khách (để gửi qua Zalo cho khách).
+   * Sinh ảnh riêng thay vì dùng ảnh trong modal -> không phụ thuộc modal đang mở.
+   */
+  const downloadQr = async (c) => {
+    try {
+      const url = await QRCode.toDataURL(qrUrlFor(c.qr_token), {
+        width: 600,
+        margin: 2,
+        errorCorrectionLevel: 'M',
+        color: { dark: '#1f2328', light: '#ffffff' },
+      })
+      const a = document.createElement('a')
+      a.href = url
+      a.download = `qr-${(c.name || 'khach').replace(/\s+/g, '-')}.png`
+      document.body.appendChild(a)
+      a.click()
+      a.remove()
+    } catch (e) {
+      setError(e.message || 'Không tải được ảnh QR.')
+    }
+  }
+
+  /**
+   * In mã QR.
+   *
+   * Thêm class `printing-qr` vào <body> để CSS `@media print` chỉ hiện mã QR.
+   * Class được gỡ sau khi in xong (dùng cả `afterprint` lẫn timeout dự phòng).
+   */
+  const printQr = () => {
+    document.body.classList.add('printing-qr')
+    const cleanup = () => {
+      document.body.classList.remove('printing-qr')
+      window.removeEventListener('afterprint', cleanup)
+    }
+    window.addEventListener('afterprint', cleanup)
+    window.print()
+    // Safari/Chrome có thể không bắn 'afterprint' -> dọn sau 1s.
+    setTimeout(cleanup, 1000)
+  }
 
   const reload = () =>
     listCustomers()
@@ -77,12 +132,16 @@ export default function CustomersPage() {
     try {
       if (editingId) {
         await updateCustomer(editingId, form)
+        setForm(EMPTY)
+        setEditingId(null)
+        await reload()
       } else {
-        await createCustomer(form)
+        // Thêm xong -> MỞ NGAY modal QR để chủ quán lấy/gửi cho khách.
+        const created = await createCustomer(form)
+        setForm(EMPTY)
+        await reload()
+        setQrFor(created)
       }
-      setForm(EMPTY)
-      setEditingId(null)
-      await reload()
     } catch (err) {
       setError(err.message || 'Lưu khách quen thất bại.')
     } finally {
@@ -239,8 +298,15 @@ export default function CustomersPage() {
                     </td>
                     <td className="t-r">
                       <div className="btn-row btn-row-end">
-                        <button className="btn btn-sm" onClick={() => setQrFor(c)}>
-                          QR
+                        <button className="btn btn-sm btn-primary" onClick={() => setQrFor(c)}>
+                          📱 Xem QR
+                        </button>
+                        <button
+                          className="btn btn-sm btn-ghost"
+                          onClick={() => downloadQr(c)}
+                          title="Tải ảnh QR để gửi khách qua Zalo"
+                        >
+                          ⬇️ Ảnh
                         </button>
                         <button className="btn btn-sm" onClick={() => startEdit(c)}>
                           Sửa
@@ -272,19 +338,30 @@ export default function CustomersPage() {
             </div>
             <div className="modal-body qr-body">
               {qrDataUrl ? (
-                <img className="qr-image" src={qrDataUrl} alt={`Mã QR của ${qrFor.name}`} />
+                <>
+                  <img
+                    id="qr-print-area"
+                    className="qr-image"
+                    src={qrDataUrl}
+                    alt={`Mã QR của ${qrFor.name}`}
+                  />
+                  <div className="qr-name">{qrFor.name}</div>
+                </>
               ) : (
                 <div className="empty">Đang tạo mã QR…</div>
               )}
-              <p className="qr-hint">
-                In mã này ra bàn, dán lên tủ lạnh, hoặc gửi cho khách.
-                <br />
-                Khách quét → vào thẳng trang đặt món, thông tin đã điền sẵn.
-              </p>
+
               {qrFor.phone && <div className="qr-meta">📞 {qrFor.phone}</div>}
               {qrFor.address && <div className="qr-meta">📍 {qrFor.address}</div>}
+
+              <p className="qr-hint">
+                Khách quét mã này → mở thẳng trang đặt món, tên/SĐT/địa chỉ <b>đã điền sẵn</b>.
+                <br />
+                In ra dán lên bàn, hoặc gửi ảnh cho khách qua Zalo.
+              </p>
+
               <details className="qr-details">
-                <summary>Đường dẫn (dùng khi quét trên máy tính)</summary>
+                <summary>Đường dẫn (copy để gửi link, dùng khi quét trên máy tính)</summary>
                 <code className="qr-url">{qrUrlFor(qrFor.qr_token)}</code>
               </details>
             </div>
@@ -296,6 +373,12 @@ export default function CustomersPage() {
               >
                 ⬇️ Tải ảnh PNG
               </a>
+              <button className="btn btn-ghost" onClick={() => copyLink(qrFor.qr_token)}>
+                {copied ? '✓ Đã copy' : '🔗 Copy link'}
+              </button>
+              <button className="btn btn-ghost" onClick={() => printQr()}>
+                🖨️ In QR
+              </button>
               <button className="btn btn-primary" onClick={() => setQrFor(null)}>
                 Đóng
               </button>
