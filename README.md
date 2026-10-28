@@ -15,6 +15,7 @@ Xây dựng bằng **React + Vite + HTML/CSS thuần**, dữ liệu lưu trên *
 | **Quản lý món** | `#/quan-tri/mon` | Thêm / sửa / xoá món, đặt giá, ẩn món hết hàng |
 | **Đơn hàng** | `#/quan-tri/orders` | Xem đơn mới, chuyển trạng thái, **in hoá đơn**, huỷ/xoá |
 | **Tổng kết** | `#/quan-tri/tong-ket` | Tổng số suất từng món theo ngày/tuần/tháng, doanh thu |
+| **Khách quen & mã QR** | `#/quan-tri/khach` | Thêm khách quen (tên/SĐT/địa chỉ), **sinh mã QR** để khách quét → vào thẳng trang đặt món, **thông tin đã điền sẵn** |
 | **In hoá đơn** | tự động | Khi bấm "Xong & in hoá đơn" → mở hộp thoại in ngay, khổ giấy 80mm |
 
 > 🔒 Toàn bộ trang `#/quan-tri/*` đều **yêu cầu đăng nhập** và được bảo vệ bởi **Supabase RLS**
@@ -79,6 +80,7 @@ Mở trình duyệt tại: **http://localhost:5173**
 | `npm run build` | Build ra thư mục `dist/` để deploy |
 | `npm run preview` | Xem bản build tại http://localhost:4173 |
 | `npm run check` | Kiểm tra kết nối Supabase + hành vi RLS (gồm cả bảng trung gian) |
+| `npm run check:qr` | Kiểm tra riêng phần **khách quen / mã QR** (bảng `customers`, RPC, quyền) |
 | `npm run verify:migration` | So khớp dữ liệu đơn cũ (JSONB) với bảng `order_items` |
 | `npm run deploy` | Build + đẩy lên GitHub Pages (cần `gh-pages`) |
 
@@ -157,6 +159,34 @@ PHẦN A — Khách (anon key) — đúng như trình duyệt của khách
 PHẦN A2 — Bảng trung gian order_items
   OK   RLS chặn đúng: khách không đọc được dòng món của đơn (0 dòng)
   OK   Khách tạo đơn qua RPC create_order được
+```
+
+### Bước 2d — (Mới) Khách quen & mã QR
+
+> Bước này **bắt buộc** nếu bạn muốn dùng tính năng *Khách quen & mã QR*
+> (trang `#/quan-tri/khach`). Nếu không chạy, trang đó sẽ báo lỗi
+> *"Could not find the table 'public.customers'"*.
+
+1. Vào **SQL Editor** → **New query**
+2. Dán toàn bộ nội dung file [`supabase/migration-customers-qr.sql`](supabase/migration-customers-qr.sql)
+3. Bấm **Run**
+
+Script này:
+- tạo bảng `customers` (khách quen: tên, SĐT, địa chỉ, **token QR**)
+- thêm cột `orders.customer_address` + `orders.customer_id`
+- tạo RPC `customer_by_token(token)` — khách quét QR gọi hàm này để lấy thông tin
+- nâng RPC `create_order(...)` lên 8 tham số (thêm địa chỉ + token khách quen)
+- **gỡ quyền xem doanh thu cho khách** (đồng thời vá luôn lỗi ở Bước 2c)
+
+> Script **chạy được nhiều lần** (idempotent) và **không xoá dữ liệu nào**.
+
+Sau khi chạy, kiểm tra bằng `npm run check:qr`:
+```
+  ĐÃ CÓ  Bảng `customers`
+  ĐÃ CÓ  Cột `orders.customer_address`
+  ĐÃ CÓ  RPC `customer_by_token`
+  ĐÃ CÓ  RPC `create_order` đã có tham số địa chỉ + token
+  ĐÃ CÓ  RPC `summarize_orders` đã bị chặn cho khách (anon)
 ```
 
 ### Bước 3 — Tạo tài khoản chủ quán
@@ -335,11 +365,14 @@ Bấm **"🖨️ In lại"** ở đơn đã hoàn thành để in lại.
 ├── supabase/
 │   ├── schema.sql             # SQL tạo bảng + RLS + dữ liệu mẫu
 │   ├── migration-order-items.sql  # (Nâng cấp) tách bảng trung gian order_items
+│   ├── migration-customers-qr.sql # (Nâng cấp) bảng customers + RPC khách quen/QR
 │   ├── fix-summarize-permissions.sql  # Gỡ quyền xem doanh thu cho khách
 │   ├── fix-create-order-return.sql   # Đổi create_order trả về jsonb
 │   └── cleanup-test-data.sql  # Xoá đơn/món rác do script kiểm tra tạo ra
 ├── scripts/
 │   ├── check-supabase.mjs     # Kiểm tra kết nối + RLS (npm run check)
+│   ├── check-qr-schema.mjs    # Kiểm tra phần khách quen/QR (npm run check:qr)
+│   ├── test-customers-local.mjs # Test luồng khách quen ở chế độ demo (npm run test:local)
 │   └── verify-migration.mjs   # So khớp đơn cũ vs order_items (npm run verify:migration)
 └── src/
     ├── main.jsx               # Gốc ứng dụng
@@ -446,6 +479,39 @@ menu_items                 orders                    order_items
 
 App tự phát hiện: nếu bảng `order_items` / RPC chưa có trong DB, nó **tự động dùng đường cũ**
 → chạy được ngay cả khi chưa chạy migration.
+
+---
+
+## 🔐 Vì sao mã QR chỉ chứa *token*, không chứa thẳng SĐT/địa chỉ?
+
+Khi quét QR, URL mở ra là:
+
+```
+https://<domain-quan-cua-ban>/#/?qr=8f3a2b1c9d4e5f60a7b8c9d0e1f2a3b4
+```
+
+URL này **không** chứa tên/SĐT/địa chỉ. Nó chỉ chứa một **token ngẫu nhiên**
+(lưu trong bảng `customers`). App gọi RPC `customer_by_token(token)` để lấy
+thông tin thật từ database.
+
+**Ba lý do:**
+
+1. **QR gọn, dễ quét.** Nhúng thẳng tên + SĐT + địa chỉ vào URL thì URL dài
+   60–80 ký tự → QR rất dày, in ra dễ bị lỗi, quét khó, và trên màn hình
+   điện thoại phải cuộn mới thấy hết.
+2. **Không lộ thông tin khách.** URL nằm trong lịch sử trình duyệt, trong log
+   máy chủ, trong ảnh chụp màn hình khách gửi cho người khác. Nếu URL chứa
+   SĐT + địa chỉ thì đó là rò rỉ dữ liệu cá nhân.
+3. **Dễ thu hồi.** Khách báo mất QR → bấm "Tạo lại QR" là token cũ chết ngay,
+   QR mới phát hành lại. Không cần đụng tới dữ liệu đơn cũ.
+
+> Token là **vé mời**: ai có token thì lấy được thông tin của khách đó.
+> Vì vậy đừng chia sẻ QR cho người không phải khách đó, và hãy tắt khách
+> (bỏ tick "Đang hoạt động") nếu khách ngừng dùng.
+
+**Về bảo mật:** bảng `customers` **không** có policy nào cho `anon` → khách
+**không** đọc được danh sách khách quen của quán. Khách chỉ lấy được thông
+tin của *chính mình* qua RPC, và chỉ khi có đúng token.
 
 ---
 

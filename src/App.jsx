@@ -8,6 +8,7 @@ import MenuPage from './pages/MenuPage.jsx'
 import OrdersPage from './pages/OrdersPage.jsx'
 import SummaryPage from './pages/SummaryPage.jsx'
 import SuccessPage from './pages/SuccessPage.jsx'
+import CustomersPage from './pages/CustomersPage.jsx'
 
 // Dùng HashRouter (#) để deploy lên GitHub Pages không cần cấu hình redirect 404.
 export default function App() {
@@ -35,6 +36,7 @@ export default function App() {
             <Route path="mon" element={<MenuPage />} />
             <Route path="orders" element={<OrdersPage />} />
             <Route path="tong-ket" element={<SummaryPage />} />
+            <Route path="khach" element={<CustomersPage />} />
           </Route>
 
           <Route path="*" element={<Navigate to="/" replace />} />

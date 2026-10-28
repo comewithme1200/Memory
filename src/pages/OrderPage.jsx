@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { useNavigate } from 'react-router-dom'
-import { listMenu, createOrder } from '../lib/db.js'
+import { useNavigate, useSearchParams } from 'react-router-dom'
+import { listMenu, createOrder, getCustomerByToken } from '../lib/db.js'
 import { fmtVND, uid } from '../lib/format.js'
 
 const CART_KEY = 'quan-an-sang:cart'
@@ -87,6 +87,41 @@ export default function OrderPage() {
   const [error, setError] = useState('')
   const [cart, setCart] = useState(loadCart)
   const [activeCat, setActiveCat] = useState('all')
+
+  // ---- Khách quen đến từ QR ---------------------------------------
+  // Token nằm trong query của HashRouter: `#/?qr=<token>`.
+  // Khi có token hợp lệ -> lấy tên/SĐT/địa chỉ từ DB rồi điền sẵn vào form.
+  const [searchParams, setSearchParams] = useSearchParams()
+  const qrToken = searchParams.get('qr') || ''
+  const [customer, setCustomer] = useState(null)
+  const [qrNotice, setQrNotice] = useState('')
+
+  useEffect(() => {
+    if (!qrToken) {
+      setCustomer(null)
+      setQrNotice('')
+      return
+    }
+    let alive = true
+    getCustomerByToken(qrToken)
+      .then((c) => {
+        if (!alive) return
+        if (c) {
+          setCustomer(c)
+          setQrNotice(`Xin chào ${c.name}! Thông tin đã điền sẵn cho bạn.`)
+        } else {
+          setCustomer(null)
+          setQrNotice('Mã QR không hợp lệ hoặc đã hết hạn — bạn vui lòng nhập thông tin.')
+        }
+      })
+      .catch(() => {
+        if (!alive) return
+        setQrNotice('Không kiểm tra được mã QR — bạn vui lòng nhập thông tin.')
+      })
+    return () => {
+      alive = false
+    }
+  }, [qrToken])
 
   useEffect(() => {
     listMenu()
@@ -309,6 +344,21 @@ export default function OrderPage() {
 
       {error && <div className="alert alert-error">{error}</div>}
 
+      {qrNotice && (
+        <div className={`alert ${customer ? 'alert-success' : 'alert-warn'}`}>
+          {customer ? '👋' : '⚠'}
+          <div>
+            <div>{qrNotice}</div>
+            {customer?.address && (
+              <div className="qr-greet-sub">
+                Địa chỉ: {customer.address}
+                {customer.phone ? ` · ${customer.phone}` : ''}
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
       {categories.length > 1 && (
         <div className="chips">
           {categories.map((c) => (
@@ -384,6 +434,8 @@ export default function OrderPage() {
           onSetQty={setQty}
           onNote={setNote}
           onSplit={splitLine}
+          customer={customer}
+          qrToken={qrToken}
         />
       )}
     </div>
@@ -392,14 +444,48 @@ export default function OrderPage() {
 
 /* --------------------------------------------------------------- */
 
-function CartBar({ cartItems, total, totalQty, onChange, onSetQty, onNote, onSplit }) {
+function CartBar({
+  cartItems,
+  total,
+  totalQty,
+  onChange,
+  onSetQty,
+  onNote,
+  onSplit,
+  customer,
+  qrToken,
+}) {
   const [open, setOpen] = useState(false)
   const [name, setName] = useState('')
   const [phone, setPhone] = useState('')
+  const [address, setAddress] = useState('')
   const [table, setTable] = useState('')
   const [note, setNote] = useState('')
   const [sending, setSending] = useState(false)
   const [err, setErr] = useState('')
+
+  /**
+   * Section "Thông tin khách" mặc định THU GỌN.
+   * - Đã điền đủ (tên + địa chỉ) -> vẫn thu gọn, hiện tóm tắt 1 dòng.
+   * - Chưa điền -> thu gọn, và bấm "Xác nhận đặt món" sẽ MỞ RA + báo lỗi.
+   */
+  const [infoOpen, setInfoOpen] = useState(false)
+  const [infoTouched, setInfoTouched] = useState(false)
+
+  // Khách quen -> điền sẵn thông tin (chỉ lần đầu, không ghi đè nếu khách sửa)
+  const prefillDone = useRef(false)
+  useEffect(() => {
+    if (prefillDone.current) return
+    if (!customer) return
+    prefillDone.current = true
+    setName((v) => v || customer.name || '')
+    setPhone((v) => v || customer.phone || '')
+    setAddress((v) => v || customer.address || '')
+  }, [customer])
+
+  // Đã đủ thông tin chưa? (tên + địa chỉ)
+  const infoComplete = Boolean(name.trim() && address.trim())
+  const infoMissing = !name.trim() || !address.trim()
 
   // Cảnh báo dựa trên TỔNG số phần trong cả giỏ (tách/gộp dòng vẫn đúng)
   const overLimit = totalQty >= QTY_WARN_THRESHOLD
@@ -408,6 +494,14 @@ function CartBar({ cartItems, total, totalQty, onChange, onSetQty, onNote, onSpl
   const submit = async () => {
     if (!name.trim()) {
       setErr('Vui lòng nhập tên để bếp gọi cho bạn.')
+      setInfoOpen(true)
+      setInfoTouched(true)
+      return
+    }
+    if (!address.trim()) {
+      setErr('Vui lòng nhập địa chỉ để chúng tôi giao món.')
+      setInfoOpen(true)
+      setInfoTouched(true)
       return
     }
     setErr('')
@@ -416,6 +510,8 @@ function CartBar({ cartItems, total, totalQty, onChange, onSetQty, onNote, onSpl
       const order = await createOrder({
         customer_name: name,
         customer_phone: phone,
+        customer_address: address,
+        customer_token: qrToken,
         table_no: table,
         note,
         items: cartItems.map((c) => ({
@@ -533,25 +629,71 @@ function CartBar({ cartItems, total, totalQty, onChange, onSetQty, onNote, onSpl
                 ))}
               </div>
 
-              <div className="field">
-                <label>Tên của bạn *</label>
-                <input value={name} onChange={(e) => setName(e.target.value)} placeholder="Nguyễn Văn A" />
+              {/* ---- SECTION THÔNG TIN KHÁCH (thu gọn mặc định) ---- */}
+              <div className={`info-box ${infoOpen ? 'info-box-open' : ''} ${infoMissing && infoTouched ? 'info-box-error' : ''}`}>
+                <button
+                  type="button"
+                  className="info-head"
+                  onClick={() => setInfoOpen((v) => !v)}
+                  aria-expanded={infoOpen}
+                >
+                  <span className="info-head-left">
+                    <span className="info-head-title">
+                      Thông tin giao hàng {infoComplete ? '✓' : '*'}
+                    </span>
+                    {infoComplete ? (
+                      <span className="info-head-summary">
+                        {name} · {address}
+                      </span>
+                    ) : (
+                      <span className="info-head-summary info-head-summary-warn">
+                        Thiếu {[!name.trim() && 'tên', !address.trim() && 'địa chỉ'].filter(Boolean).join(' và ')}
+                      </span>
+                    )}
+                  </span>
+                  <span className="info-caret">{infoOpen ? '▲' : '▼'}</span>
+                </button>
+
+                {infoOpen && (
+                  <div className="info-body">
+                    {customer && (
+                      <div className="info-prefill">
+                        ✓ Đã điền sẵn từ mã QR của bạn
+                      </div>
+                    )}
+                    <div className="field">
+                      <label>Tên của bạn *</label>
+                      <input
+                        value={name}
+                        onChange={(e) => setName(e.target.value)}
+                        placeholder="Nguyễn Văn A"
+                      />
+                    </div>
+                    <div className="field">
+                      <label>Số điện thoại</label>
+                      <input
+                        value={phone}
+                        onChange={(e) => setPhone(e.target.value)}
+                        placeholder="0909 000 000"
+                        inputMode="tel"
+                      />
+                    </div>
+                    <div className="field">
+                      <label>Địa chỉ giao hàng *</label>
+                      <input
+                        value={address}
+                        onChange={(e) => setAddress(e.target.value)}
+                        placeholder="123 Nguyễn Văn A, Quận 1"
+                      />
+                    </div>
+                    <div className="field">
+                      <label>Số bàn (nếu có)</label>
+                      <input value={table} onChange={(e) => setTable(e.target.value)} placeholder="Bàn 5" />
+                    </div>
+                  </div>
+                )}
               </div>
-              <div className="field-row">
-                <div className="field">
-                  <label>Số điện thoại</label>
-                  <input
-                    value={phone}
-                    onChange={(e) => setPhone(e.target.value)}
-                    placeholder="0909 000 000"
-                    inputMode="tel"
-                  />
-                </div>
-                <div className="field">
-                  <label>Số bàn (nếu có)</label>
-                  <input value={table} onChange={(e) => setTable(e.target.value)} placeholder="Bàn 5" />
-                </div>
-              </div>
+
               <div className="field">
                 <label>Ghi chú cho bếp (áp dụng cho cả đơn)</label>
                 <textarea

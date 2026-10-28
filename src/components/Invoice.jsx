@@ -31,6 +31,9 @@ export default function Invoice({ order }) {
         </div>
         {order.customer_name && <div className="inv-small">Khách: {order.customer_name}</div>}
         {order.customer_phone && <div className="inv-small">SĐT: {order.customer_phone}</div>}
+        {order.customer_address && (
+          <div className="inv-small">Giao tại: {order.customer_address}</div>
+        )}
         {order.table_no && <div className="inv-small">Bàn: {order.table_no}</div>}
 
         <div className="inv-rule" />

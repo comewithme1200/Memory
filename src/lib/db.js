@@ -36,14 +36,19 @@ const readLocal = () => {
           created_at: new Date().toISOString(),
         })),
         orders: [],
+        customers: [],
       }
       writeLocal(seed)
       return seed
     }
     const parsed = JSON.parse(raw)
-    return { items: parsed.items || [], orders: parsed.orders || [] }
+    return {
+      items: parsed.items || [],
+      orders: parsed.orders || [],
+      customers: parsed.customers || [],
+    }
   } catch {
-    return { items: [], orders: [] }
+    return { items: [], orders: [], customers: [] }
   }
 }
 
@@ -272,13 +277,30 @@ export async function createOrder(order) {
     code: order.code || randomOrderCode(),
     customer_name: (order.customer_name || '').trim(),
     customer_phone: (order.customer_phone || '').trim(),
+    customer_address: (order.customer_address || '').trim(),
     table_no: (order.table_no || '').trim(),
     note: (order.note || '').trim(),
     items,
     total,
     status: 'new',
+    // Token khách quen (từ QR). Server dùng nó để lấy thông tin trong DB.
+    customer_token: (order.customer_token || '').trim(),
   }
   if (!supabase) {
+    // Chế độ demo (localStorage): tự tra cứu khách quen theo token.
+    // Ở chế độ Supabase, việc này do RPC create_order làm trên server —
+    // đó là nơi chuẩn hoá dữ liệu, không tin giá/thông tin từ client.
+    if (payload.customer_token) {
+      const c = readLocal().customers.find(
+        (x) => x.qr_token === payload.customer_token && x.is_active !== false,
+      )
+      if (c) {
+        payload.customer_name = payload.customer_name || c.name || ''
+        payload.customer_phone = payload.customer_phone || c.phone || ''
+        payload.customer_address = payload.customer_address || c.address || ''
+        payload.customer_id = c.id
+      }
+    }
     const now = new Date().toISOString()
     return withLocal((d) => {
       const row = { id: uid(), ...payload, created_at: now, completed_at: null }
@@ -326,18 +348,45 @@ export async function createOrder(order) {
  *     và chốt tên/giá -> client hiển thị khớp 100% với DB.
  */
 async function tryCreateOrderRpc(payload) {
-  const { data, error } = await supabase.rpc('create_order', {
-    p_code: payload.code,
-    p_customer_name: payload.customer_name,
-    p_customer_phone: payload.customer_phone,
-    p_table_no: payload.table_no,
-    p_note: payload.note,
-    p_items: payload.items,
-  })
-  if (error) {
-    // Hàm chưa tồn tại -> dùng đường cũ. Các lỗi khác thì ném ra.
-    if (/does not exist|could not find|not found|schema cache/i.test(error.message || '')) return null
-    throw new Error(friendlyError(error, 'Đặt hàng'))
+  // Hàm có 3 phiên bản (tự phát hiện qua lỗi của PostgREST):
+  //   1. KHÔNG CÓ hàm           -> `does not exist` -> fallback insert thẳng
+  //   2. CŨ (6 tham số)         -> không nhận p_customer_address / p_customer_token
+  //   3. MỚI (8 tham số)        -> có địa chỉ + token khách quen
+  // Thử bản mới trước; nếu báo lỗi về tham số -> thử bản cũ.
+  const attempts = [
+    {
+      p_code: payload.code,
+      p_customer_name: payload.customer_name,
+      p_customer_phone: payload.customer_phone,
+      p_customer_address: payload.customer_address,
+      p_table_no: payload.table_no,
+      p_note: payload.note,
+      p_items: payload.items,
+      p_customer_token: payload.customer_token,
+    },
+    {
+      p_code: payload.code,
+      p_customer_name: payload.customer_name,
+      p_customer_phone: payload.customer_phone,
+      p_table_no: payload.table_no,
+      p_note: payload.note,
+      p_items: payload.items,
+    },
+  ]
+
+  let data = null
+  for (const args of attempts) {
+    const res = await supabase.rpc('create_order', args)
+    if (!res.error) {
+      data = res.data
+      break
+    }
+    const msg = res.error.message || ''
+    // Hàm không tồn tại -> fallback đường cũ.
+    if (/does not exist|could not find|not found|schema cache/i.test(msg)) return null
+    // Sai danh sách tham số -> thử bản tiếp theo.
+    if (/function .*create_order.*does not exist|unknown function|invalid input/i.test(msg)) continue
+    throw new Error(friendlyError(res.error, 'Đặt hàng'))
   }
   if (!data) return null
 
@@ -345,6 +394,7 @@ async function tryCreateOrderRpc(payload) {
     code: payload.code,
     customer_name: payload.customer_name,
     customer_phone: payload.customer_phone,
+    customer_address: payload.customer_address,
     table_no: payload.table_no,
     note: payload.note,
     status: 'new',
@@ -465,4 +515,151 @@ export async function summarize({ from, to } = {}) {
   const rows = Array.from(map.values()).sort((a, b) => b.qty - a.qty)
   totalQty = rows.reduce((s, r) => s + r.qty, 0)
   return { rows, totalQty, totalRevenue, orderCount }
+}
+
+/* -------------------------- CUSTOMERS ----------------------------- */
+
+/**
+ * Khách quen — chủ quán lưu thông tin + sinh QR.
+ *
+ * Mỗi khách có 1 `qr_token` (chuỗi ngẫu nhiên). Token nằm trong URL của QR:
+ *   https://<domain>/#/?qr=<token>
+ * Khi khách quét, app gọi RPC `customer_by_token` để lấy tên/SĐT/địa chỉ
+ * rồi điền sẵn vào form đặt món.
+ *
+ * Lưu ý bảo mật: token là "vé mời" — ai có token thì lấy được thông tin khách
+ * đó. Vì vậy KHÔNG nhúng thẳng SĐT/địa chỉ vào URL (vừa dài vừa lộ thông tin).
+ */
+export async function listCustomers() {
+  if (!supabase) {
+    return readLocal().customers.slice().sort((a, b) => (a.name || '').localeCompare(b.name || ''))
+  }
+  const { data, error } = await supabase
+    .from('customers')
+    .select('*')
+    .order('created_at', { ascending: false })
+  if (error) throw new Error(friendlyError(error, 'Tải danh sách khách quen'))
+  return data || []
+}
+
+export async function createCustomer(customer) {
+  const payload = {
+    name: (customer.name || '').trim().slice(0, 200),
+    phone: (customer.phone || '').trim().slice(0, 50),
+    address: (customer.address || '').trim().slice(0, 500),
+    note: (customer.note || '').trim().slice(0, 500),
+    is_active: customer.is_active !== false,
+  }
+  if (!supabase) {
+    return withLocal((d) => {
+      const row = {
+        id: uid(),
+        ...payload,
+        qr_token: localToken(),
+        created_at: new Date().toISOString(),
+      }
+      d.customers.push(row)
+      return row
+    })
+  }
+  // Tự sinh token ở client để có token ngay, rồi insert.
+  const row = { id: uuidV4(), ...payload, qr_token: localToken() }
+  const { error } = await supabase.from('customers').insert(row)
+  if (error) throw new Error(friendlyError(error, 'Thêm khách quen'))
+  return { ...row, created_at: new Date().toISOString() }
+}
+
+export async function updateCustomer(id, customer) {
+  const payload = {
+    name: (customer.name || '').trim().slice(0, 200),
+    phone: (customer.phone || '').trim().slice(0, 50),
+    address: (customer.address || '').trim().slice(0, 500),
+    note: (customer.note || '').trim().slice(0, 500),
+    is_active: customer.is_active !== false,
+  }
+  if (!supabase) {
+    return withLocal((d) => {
+      const i = d.customers.findIndex((x) => x.id === id)
+      if (i >= 0) d.customers[i] = { ...d.customers[i], ...payload }
+      return d.customers[i] || null
+    })
+  }
+  const { data, error } = await supabase
+    .from('customers')
+    .update(payload)
+    .eq('id', id)
+    .select()
+    .single()
+  if (error) throw new Error(friendlyError(error, 'Cập nhật khách quen'))
+  return data
+}
+
+export async function deleteCustomer(id) {
+  if (!supabase) {
+    return withLocal((d) => {
+      d.customers = d.customers.filter((x) => x.id !== id)
+      return true
+    })
+  }
+  const { error } = await supabase.from('customers').delete().eq('id', id)
+  if (error) throw new Error(friendlyError(error, 'Xoá khách quen'))
+  return true
+}
+
+/**
+ * Sinh lại token (khi khách bị mất QR / token bị lộ).
+ * Token cũ ngay lập tức không dùng được.
+ */
+export async function regenerateCustomerToken(id) {
+  const token = localToken()
+  if (!supabase) {
+    return withLocal((d) => {
+      const i = d.customers.findIndex((x) => x.id === id)
+      if (i >= 0) d.customers[i].qr_token = token
+      return d.customers[i] || null
+    })
+  }
+  const { data, error } = await supabase
+    .from('customers')
+    .update({ qr_token: token })
+    .eq('id', id)
+    .select()
+    .single()
+  if (error) throw new Error(friendlyError(error, 'Tạo lại mã QR'))
+  return data
+}
+
+/**
+ * Lấy thông tin khách quen từ token trong QR.
+ *
+ * Dùng RPC `customer_by_token` (security definer) vì khách (anon) không được
+ * đọc bảng `customers` — chỉ được đọc đúng 1 khách mà mình có token.
+ *
+ * Trả về `null` nếu token sai / khách đã bị tắt.
+ */
+export async function getCustomerByToken(token) {
+  const t = String(token || '').trim()
+  if (!t) return null
+
+  if (!supabase) {
+    return readLocal().customers.find((c) => c.qr_token === t && c.is_active !== false) || null
+  }
+
+  const { data, error } = await supabase.rpc('customer_by_token', { p_token: t })
+  if (error) {
+    if (/does not exist|could not find|not found|schema cache/i.test(error.message || '')) return null
+    throw new Error(friendlyError(error, 'Lấy thông tin khách'))
+  }
+  return data || null
+}
+
+/** Sinh token ngẫu nhiên (dùng lúc tạo khách quen). */
+const localToken = () => {
+  const bytes = new Uint8Array(16)
+  if (typeof crypto !== 'undefined' && crypto.getRandomValues) {
+    crypto.getRandomValues(bytes)
+  } else {
+    for (let i = 0; i < 16; i++) bytes[i] = Math.floor(Math.random() * 256)
+  }
+  return Array.from(bytes, (b) => b.toString(16).padStart(2, '0')).join('')
 }

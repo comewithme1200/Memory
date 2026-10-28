@@ -9,11 +9,14 @@
     "build": "vite build",
     "preview": "vite preview --port 4173",
     "check": "node scripts/check-supabase.mjs",
+    "check:qr": "node scripts/check-qr-schema.mjs",
+    "test:local": "node scripts/test-customers-local.mjs",
     "verify:migration": "node scripts/verify-migration.mjs",
     "deploy": "npm run build && gh-pages -d dist"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.45.4",
+    "qrcode": "^1.5.4",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
     "react-router-dom": "^7.18.4"

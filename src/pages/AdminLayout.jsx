@@ -34,12 +34,15 @@ export default function AdminLayout() {
         <NavLink className="tab" to="/quan-tri/orders">
           🧾 Đơn hàng
         </NavLink>
+        <NavLink className="tab" to="/quan-tri/khach">
+          👥 Khách quen
+        </NavLink>
         <NavLink className="tab" to="/quan-tri/tong-ket">
           📊 Tổng kết
         </NavLink>
       </nav>
 
-      {/* Outlet hiển thị trang con (Món / Đơn hàng / Tổng kết) */}
+      {/* Outlet hiển thị trang con (Món / Đơn hàng / Khách quen / Tổng kết) */}
       <Outlet />
     </div>
   )

@@ -123,6 +123,9 @@ export default function OrdersPage() {
                       {o.customer_phone ? ` · ${o.customer_phone}` : ''}
                       {o.table_no ? ` · Bàn ${o.table_no}` : ''}
                     </div>
+                    {o.customer_address && (
+                      <div className="order-address">📍 {o.customer_address}</div>
+                    )}
                   </div>
                   <div className="order-total">
                     <strong>{fmtVND(o.total)}</strong>
