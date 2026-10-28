@@ -98,12 +98,38 @@ $$;
 
 -- ---------------------------------------------------------------------
 -- 4) Xác nhận
+--
+-- LƯU Ý: `pg_publication_tables.attnames` là kiểu MẢNG text (danh sách cột
+-- được publish), KHÔNG phải `attname` (kiểu text đơn). Sai tên cột -> lỗi:
+--   ERROR: 42703: column pt.attname does not exist
 -- ---------------------------------------------------------------------
 select
-  p.pubname                        as publication,
-  pt.schemaname || '.' || pt.tablename as bang,
-  pt.attname                       as cot,
-  p.pubinsert, p.pubupdate, p.pubdelete
+  p.pubname                             as publication,
+  pt.schemaname || '.' || pt.tablename   as bang,
+  pt.attnames                           as cot_dc_publish,
+  p.pubinsert,
+  p.pubupdate,
+  p.pubdelete
 from pg_publication p
 join pg_publication_tables pt on pt.pubname = p.pubname
 where pt.tablename = 'orders';
+
+-- Kiểm tra `replica identity` của bảng `orders`.
+-- Giá trị mong đợi: 'f' (FULL). Nếu là 'd' (DEFAULT) thì payload Realtime
+-- chỉ có cột khoá -> client phải gọi thêm API mới lấy được nội dung đơn.
+select
+  c.relname                                as bang,
+  case c.relreplident
+    when 'd' then 'DEFAULT'
+    when 'f' then 'FULL'
+    when 'i' then 'INDEX'
+    when 'n' then 'NOTHING'
+  end                                     as replica_identity,
+  case c.relreplident
+    when 'f' then 'OK - payload day du'
+    else 'CANH BAO - payload chi co cot khoa'
+  end                                     as ket_luan
+from pg_class c
+join pg_namespace n on n.oid = c.relnamespace
+where c.relname = 'orders'
+  and n.nspname = 'public';
