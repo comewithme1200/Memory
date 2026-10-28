@@ -1,0 +1,14 @@
+node_modules/
+dist/
+.DS_Store
+Thumbs.db
+*.log
+npm-debug.log*
+
+# Thư mục tạm của Supabase CLI
+supabase/.temp/
+
+# Biến môi trường cục bộ (không commit)
+.env
+.env.local
+.env.*.local
