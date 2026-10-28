@@ -2,7 +2,8 @@
 -- VÁ LỖI GIÁ: tuỳ chọn không được cộng vào giá món
 --
 -- VÌ SAO LỖI:
---   Đoạn tính giá trong RPC `create_order` dùng:
+--   Đoạn tính giá trong RPC create_order (bản tạo từ migration-options.sql
+--   CŨ) dùng:
 --
 --     select sum(mio.price_delta)
 --     from jsonb_array_elements(
@@ -17,25 +18,37 @@
 --     left join public.menu_item_options mio
 --       on mio.id::text = o->>'menuItemOptionId'
 --
---   `jsonb_agg(eo->'options')` gom các mảng lại thành MẢNG LỒNG MẢNG:
+--   jsonb_agg(eo->'options') gom các mảng lại thành MẢNG LỒNG MẢNG:
 --       [[{...},{...}]]
---   nên `jsonb_array_elements(opts)` cho ra phần tử là MẢNG `[ {...} ]`,
---   không phải object -> `o->>'menuItemOptionId'` = NULL
+--   -> jsonb_array_elements(opts) cho ra phần tử là MẢNG, không phải object
+--   -> o->>'menuItemOptionId' = NULL
 --   -> left join không khớp -> sum(...) = NULL -> coalesce(..., 0) = 0
 --   -> giá món = GIÁ GỐC, mất hết phần +5k / -5k của Size.
 --
---   (Lỗi `line` đánh số lệch 1 KHÔNG xảy ra: `with ordinality` đánh số từ 1
---    và client gửi `line` từ 1 -> đã khớp.)
+--   Kết quả: đơn "2x Size to + 1x Size nhỏ" ra 90.000đ thay vì 95.000đ.
 --
 -- CÁCH SỬA:
---   Bỏ hẳn `jsonb_agg` + `jsonb_array_elements` bọc ngoài, dùng thẳng
---   `jsonb_array_elements(eo->'options')` cho entry đang xét.
+--   Bỏ jsonb_agg + lớp jsonb_array_elements bọc ngoài, dùng thẳng
+--   jsonb_array_elements(eo->'options') cho entry đang xét.
 --
 -- CÁCH CHẠY:
 --   Supabase Dashboard -> SQL Editor -> dán file này -> Run
 --
 -- Script idempotent: chạy lại nhiều lần vẫn cho kết quả đúng.
+--
+-- File này được SINH TỰ ĐỘNG từ supabase/migration-options.sql
+-- (scripts/gen-fix-price.mjs): hàm create_order + khối revoke quyền
+-- được copy NGUYÊN VĂN -> không bao giờ sót logic nào.
 -- =====================================================================
+
+-- Xoá hàm cũ trước.
+-- "create or replace" KHÔNG cho đổi tên tham số đầu vào, nên nếu hàm đang
+-- có trong DB dùng tên khác sẽ báo lỗi. "drop" cho an toàn.
+-- Hàm không lưu dữ liệu nên drop không mất gì.
+drop function if exists public.create_order(text, text, text, text, text, text, jsonb, text, jsonb);
+drop function if exists public.create_order(text, text, text, text, text, text, jsonb, text);
+drop function if exists public.create_order(text, text, text, text, text, text, jsonb);
+drop function if exists public.create_order(text, text, text, text, text, jsonb);
 
 create or replace function public.create_order(
   p_code            text,
@@ -44,8 +57,13 @@ create or replace function public.create_order(
   p_customer_address text default '',
   p_table_no        text default '',
   p_note            text default '',
-  p_items           jsonb,
+  p_items           jsonb default '[]'::jsonb,
   p_customer_token  text default '',
+  -- Tuỳ chọn khách chọn cho từng dòng món.
+  -- Định dạng: [{ "line": 0, "options": [
+  --   { "optionId": "<uuid>", "menuItemOptionId": "<uuid>",
+  --     "name": "Size to", "priceDelta": 5000 } ] }]
+  -- `line` = index của dòng món trong p_items (bắt đầu từ 0).
   p_item_options    jsonb default '[]'::jsonb
 )
 returns jsonb
@@ -55,21 +73,35 @@ set search_path = public
 as $$
 declare
   v_order_id    uuid := gen_random_uuid();
-  v_customer_id uuid;
-  v_c_name      text;
-  v_c_phone     text;
-  v_c_address   text;
+  v_total       integer := 0;
+  v_customer_id uuid := null;
+  v_c_name      text := '';
+  v_c_phone     text := '';
+  v_c_address   text := '';
   v_items       jsonb;
-  v_total       int := 0;
 begin
+  -- --- Kiểm tra đầu vào ---
+  if p_code is null or btrim(p_code) = '' then
+    raise exception 'Thiếu mã đơn';
+  end if;
+
+  if p_items is null or jsonb_typeof(p_items) <> 'array' then
+    raise exception 'Danh sách món không hợp lệ';
+  end if;
+
+  if p_item_options is null or jsonb_typeof(p_item_options) <> 'array' then
+    p_item_options := '[]'::jsonb;
+  end if;
+
   -- --- Chuẩn hoá thông tin khách ---
   v_c_name    := left(coalesce(p_customer_name, ''), 200);
   v_c_phone   := left(coalesce(p_customer_phone, ''), 50);
   v_c_address := left(coalesce(p_customer_address, ''), 500);
 
-  -- Tra khách quen theo token QR (nếu có)
-  if btrim(coalesce(p_customer_token, '')) <> '' then
-    select c.id into v_customer_id
+  -- --- Tra cứu khách quen theo token ---
+  if p_customer_token is not null and btrim(p_customer_token) <> '' then
+    select c.id, c.name, c.phone, c.address
+    into v_customer_id, v_c_name, v_c_phone, v_c_address
     from public.customers c
     where c.qr_token = btrim(p_customer_token)
       and c.is_active
@@ -92,8 +124,11 @@ begin
         'id',    m.id,
         'name',  coalesce(nullif(m.name, ''), nullif(e.item->>'name', ''), '(không rõ)'),
         'price', m.price + coalesce((
-              -- ĐÃ SỬA: bỏ `jsonb_agg` (tạo mảng lồng mảng) -> dùng thẳng
-              -- `jsonb_array_elements(eo->'options')` cho entry đang xét.
+              -- Lấy TẤT CẢ tuỳ chọn của dòng món này.
+              -- Dùng jsonb_array_elements trực tiếp trên mảng `options` của
+              -- đúng 1 entry (line = e.idx) — KHÔNG dùng jsonb_agg vì sẽ tạo
+              -- mảng LỒNG mảng ([[{...}]]) -> o->>'menuItemOptionId' = NULL
+              -- -> không join được menu_item_options -> giá mất hết phần delta.
               select sum(mio.price_delta)
               from jsonb_array_elements(p_item_options) eo
               cross join lateral jsonb_array_elements(
@@ -221,9 +256,22 @@ begin
 end;
 $$;
 
--- Bảo đảm khách (anon) vẫn gọi được
-grant execute on function public.create_order(text, text, text, text, text, text, jsonb, text, jsonb)
-  to anon, authenticated;
+do $$
+declare
+  r record;
+begin
+  for r in
+    select p.oid
+    from pg_proc p
+    join pg_namespace n on n.oid = p.pronamespace
+    where n.nspname = 'public'
+      and p.proname = 'create_order'
+  loop
+    execute format('revoke all on function %s from public', r.oid::regprocedure);
+    execute format('revoke all on function %s from anon', r.oid::regprocedure);
+    execute format('grant execute on function %s to anon, authenticated', r.oid::regprocedure);
+  end loop;
+end $$;
 
 -- ---------------------------------------------------------------------
 -- Kiểm tra sau khi chạy:
