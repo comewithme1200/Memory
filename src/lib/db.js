@@ -23,6 +23,30 @@ const SEED_ITEMS = [
   { name: 'Nước mía', price: 10000, description: 'Nước mía tươi, đá lạnh', category: 'Nước uống', sort_order: 6 },
 ]
 
+/* ------------------------------------------------------------------ *
+ * TUỲ CHỌN MÓN (options) — kiểu GrabFood
+ *
+ * Cấu trúc:
+ *   options (nhóm dùng chung)  ─┐
+ *                                ├─ menu_item_option_groups (bảng trung gian)
+ *   menu_items ─────────────────┘        │
+ *                                         └─ menu_item_options (lựa chọn cụ thể)
+ *
+ * Ví dụ nhóm "Size" (dùng chung cho Phở và Bún bò):
+ *   Size to    +5000
+ *   Size vừa      0
+ *   Size nhỏ   -5000
+ *
+ * Giá cuối = giá gốc của món + TỔNG price_delta của các tuỳ chọn đã chọn.
+ * price_delta CÓ THỂ ÂM.
+ * ------------------------------------------------------------------ */
+
+// Tên nhóm tuỳ chọn dùng chung cho nhiều món (seed chế độ demo)
+const SEED_OPTIONS = [
+  { name: 'Size', description: 'Chọn cỡ phần ăn', is_multi: false },
+  { name: 'Topping', description: 'Thêm món ăn kèm', is_multi: true },
+]
+
 const readLocal = () => {
   try {
     const raw = localStorage.getItem(LS_KEY)
@@ -37,6 +61,16 @@ const readLocal = () => {
         })),
         orders: [],
         customers: [],
+        // Nhóm tuỳ chọn dùng chung
+        options: SEED_OPTIONS.map((o) => ({
+          id: uid(),
+          ...o,
+          created_at: new Date().toISOString(),
+        })),
+        // Lựa chọn cụ thể cho từng món
+        menuItemOptions: [],
+        // Liên kết món <-> nhóm tuỳ chọn
+        menuItemOptionGroups: [],
       }
       writeLocal(seed)
       return seed
@@ -46,9 +80,19 @@ const readLocal = () => {
       items: parsed.items || [],
       orders: parsed.orders || [],
       customers: parsed.customers || [],
+      options: parsed.options || [],
+      menuItemOptions: parsed.menuItemOptions || [],
+      menuItemOptionGroups: parsed.menuItemOptionGroups || [],
     }
   } catch {
-    return { items: [], orders: [], customers: [] }
+    return {
+      items: [],
+      orders: [],
+      customers: [],
+      options: [],
+      menuItemOptions: [],
+      menuItemOptionGroups: [],
+    }
   }
 }
 
@@ -176,8 +220,327 @@ export async function deleteMenuItem(id) {
   return true
 }
 
-/* ---------------------------- ORDERS ---------------------------- */
+/* --------------------------- OPTIONS ----------------------------- */
 
+/**
+ * Nhóm tuỳ chọn dùng chung (vd: Size, Topping).
+ */
+export async function listOptionGroups() {
+  if (!supabase) {
+    return readLocal().options.slice().sort((a, b) => (a.name || '').localeCompare(b.name || ''))
+  }
+  const { data, error } = await supabase
+    .from('options')
+    .select('*')
+    .order('name', { ascending: true })
+  if (error) throw new Error(friendlyError(error, 'Tải danh sách nhóm tuỳ chọn'))
+  return data || []
+}
+
+/**
+ * Toàn bộ tuỳ chọn của 1 món, đã gom theo nhóm.
+ *
+ * Trả về: [{ id, name, is_multi, is_required, sort_order, choices: [...] }]
+ *   choices: [{ id, name, price_delta, is_available, sort_order }]
+ */
+export async function listItemOptions(menuItemId) {
+  if (!supabase) {
+    const d = readLocal()
+    const groups = d.menuItemOptionGroups
+      .filter((g) => g.menu_item_id === menuItemId)
+      .sort((a, b) => (a.sort_order ?? 0) - (b.sort_order ?? 0))
+    return groups.map((g) => {
+      const grp = d.options.find((o) => o.id === g.option_id)
+      const choices = d.menuItemOptions
+        .filter((o) => o.menu_item_id === menuItemId && o.option_id === g.option_id)
+        .sort((a, b) => (a.sort_order ?? 0) - (b.sort_order ?? 0))
+      return {
+        id: g.option_id,
+        name: grp?.name || '',
+        description: grp?.description || '',
+        is_multi: grp?.is_multi !== false,
+        is_required: g.is_required !== false,
+        sort_order: g.sort_order ?? 0,
+        choices,
+      }
+    })
+  }
+
+  // Lấy nhóm của món
+  const { data: links, error: linkErr } = await supabase
+    .from('menu_item_option_groups')
+    .select('*')
+    .eq('menu_item_id', menuItemId)
+    .order('sort_order', { ascending: true })
+  if (linkErr) {
+    if (/does not exist|could not find|not found|schema cache/i.test(linkErr.message || '')) return []
+    throw new Error(friendlyError(linkErr, 'Tải tuỳ chọn của món'))
+  }
+  if (!links?.length) return []
+
+  // Lấy thông tin nhóm
+  const groupIds = links.map((l) => l.option_id)
+  const { data: groups, error: grpErr } = await supabase
+    .from('options')
+    .select('*')
+    .in('id', groupIds)
+  if (grpErr) throw new Error(friendlyError(grpErr, 'Tải nhóm tuỳ chọn'))
+
+  // Lấy lựa chọn cụ thể
+  const { data: choices, error: chErr } = await supabase
+    .from('menu_item_options')
+    .select('*')
+    .eq('menu_item_id', menuItemId)
+    .in('option_id', groupIds)
+    .order('sort_order', { ascending: true })
+  if (chErr) throw new Error(friendlyError(chErr, 'Tải lựa chọn của món'))
+
+  return links.map((l) => {
+    const grp = (groups || []).find((g) => g.id === l.option_id)
+    return {
+      id: l.option_id,
+      name: grp?.name || '',
+      description: grp?.description || '',
+      is_multi: grp?.is_multi !== false,
+      is_required: l.is_required !== false,
+      sort_order: l.sort_order ?? 0,
+      choices: (choices || []).filter((c) => c.option_id === l.option_id),
+    }
+  })
+}
+
+/**
+ * Tuỳ chọn của TẤT CẢ món — dùng cho trang quản trị (1 lần gọi, không gọi
+ * lặp lại từng món để tránh N+1 request).
+ *
+ * Trả về: Map<menuItemId, groups[]>
+ */
+export async function listAllItemOptions() {
+  if (!supabase) {
+    const d = readLocal()
+    const map = new Map()
+    for (const item of d.items) {
+      map.set(item.id, await listItemOptions(item.id))
+    }
+    return map
+  }
+
+  const { data: links, error: linkErr } = await supabase
+    .from('menu_item_option_groups')
+    .select('*')
+  if (linkErr) {
+    if (/does not exist|could not find|not found|schema cache/i.test(linkErr.message || '')) {
+      return new Map()
+    }
+    throw new Error(friendlyError(linkErr, 'Tải tuỳ chọn'))
+  }
+  if (!links?.length) return new Map()
+
+  const { data: groups } = await supabase.from('options').select('*')
+  const { data: choices } = await supabase
+    .from('menu_item_options')
+    .select('*')
+    .order('sort_order', { ascending: true })
+
+  const map = new Map()
+  for (const l of links) {
+    const grp = (groups || []).find((g) => g.id === l.option_id)
+    const list = map.get(l.menu_item_id) || []
+    list.push({
+      id: l.option_id,
+      name: grp?.name || '',
+      description: grp?.description || '',
+      is_multi: grp?.is_multi !== false,
+      is_required: l.is_required !== false,
+      sort_order: l.sort_order ?? 0,
+      choices: (choices || []).filter(
+        (c) => c.menu_item_id === l.menu_item_id && c.option_id === l.option_id,
+      ),
+    })
+    map.set(l.menu_item_id, list)
+  }
+  for (const list of map.values()) {
+    list.sort((a, b) => (a.sort_order ?? 0) - (b.sort_order ?? 0))
+  }
+  return map
+}
+
+/** Tạo nhóm tuỳ chọn mới. */
+export async function createOptionGroup(group) {
+  const payload = {
+    name: (group.name || '').trim().slice(0, 100),
+    description: (group.description || '').trim().slice(0, 200),
+    is_multi: group.is_multi === true,
+  }
+  if (!payload.name) throw new Error('Tên nhóm tuỳ chọn không được để trống.')
+  if (!supabase) {
+    return withLocal((d) => {
+      const row = { id: uid(), ...payload, created_at: new Date().toISOString() }
+      d.options.push(row)
+      return row
+    })
+  }
+  const row = { id: uuidV4(), ...payload }
+  const { error } = await supabase.from('options').insert(row)
+  if (error) throw new Error(friendlyError(error, 'Thêm nhóm tuỳ chọn'))
+  return { ...row, created_at: new Date().toISOString() }
+}
+
+export async function updateOptionGroup(id, group) {
+  const payload = {
+    name: (group.name || '').trim().slice(0, 100),
+    description: (group.description || '').trim().slice(0, 200),
+    is_multi: group.is_multi === true,
+  }
+  if (!supabase) {
+    return withLocal((d) => {
+      const i = d.options.findIndex((x) => x.id === id)
+      if (i >= 0) d.options[i] = { ...d.options[i], ...payload }
+      return d.options[i] || null
+    })
+  }
+  const { data, error } = await supabase
+    .from('options')
+    .update(payload)
+    .eq('id', id)
+    .select()
+    .single()
+  if (error) throw new Error(friendlyError(error, 'Cập nhật nhóm tuỳ chọn'))
+  return data
+}
+
+export async function deleteOptionGroup(id) {
+  if (!supabase) {
+    return withLocal((d) => {
+      d.options = d.options.filter((x) => x.id !== id)
+      d.menuItemOptions = d.menuItemOptions.filter((x) => x.option_id !== id)
+      d.menuItemOptionGroups = d.menuItemOptionGroups.filter((x) => x.option_id !== id)
+      return true
+    })
+  }
+  const { error } = await supabase.from('options').delete().eq('id', id)
+  if (error) throw new Error(friendlyError(error, 'Xoá nhóm tuỳ chọn'))
+  return true
+}
+
+/**
+ * Tạo lựa chọn cụ thể cho 1 món trong 1 nhóm.
+ * `price_delta` có thể âm (vd size nhỏ -5000).
+ */
+export async function createItemOption(menuItemId, option) {
+  const payload = {
+    option_id: option.option_id,
+    menu_item_id: menuItemId,
+    name: (option.name || '').trim().slice(0, 100),
+    price_delta: Math.round(Number(option.price_delta) || 0),
+    is_available: option.is_available !== false,
+    sort_order: Number(option.sort_order) || 0,
+  }
+  if (!payload.name) throw new Error('Tên lựa chọn không được để trống.')
+  if (!supabase) {
+    return withLocal((d) => {
+      const row = { id: uid(), ...payload, created_at: new Date().toISOString() }
+      d.menuItemOptions.push(row)
+      return row
+    })
+  }
+  const row = { id: uuidV4(), ...payload }
+  const { error } = await supabase.from('menu_item_options').insert(row)
+  if (error) throw new Error(friendlyError(error, 'Thêm lựa chọn'))
+  return { ...row, created_at: new Date().toISOString() }
+}
+
+export async function updateItemOption(id, option) {
+  const payload = {
+    name: (option.name || '').trim().slice(0, 100),
+    price_delta: Math.round(Number(option.price_delta) || 0),
+    is_available: option.is_available !== false,
+    sort_order: Number(option.sort_order) || 0,
+  }
+  if (!supabase) {
+    return withLocal((d) => {
+      const i = d.menuItemOptions.findIndex((x) => x.id === id)
+      if (i >= 0) d.menuItemOptions[i] = { ...d.menuItemOptions[i], ...payload }
+      return d.menuItemOptions[i] || null
+    })
+  }
+  const { data, error } = await supabase
+    .from('menu_item_options')
+    .update(payload)
+    .eq('id', id)
+    .select()
+    .single()
+  if (error) throw new Error(friendlyError(error, 'Cập nhật lựa chọn'))
+  return data
+}
+
+export async function deleteItemOption(id) {
+  if (!supabase) {
+    return withLocal((d) => {
+      d.menuItemOptions = d.menuItemOptions.filter((x) => x.id !== id)
+      return true
+    })
+  }
+  const { error } = await supabase.from('menu_item_options').delete().eq('id', id)
+  if (error) throw new Error(friendlyError(error, 'Xoá lựa chọn'))
+  return true
+}
+
+/** Gắn 1 nhóm tuỳ chọn vào 1 món (bảng trung gian). */
+export async function attachOptionGroup(menuItemId, optionId, { isRequired = false, sortOrder = 0 } = {}) {
+  if (!supabase) {
+    return withLocal((d) => {
+      const existing = d.menuItemOptionGroups.find(
+        (g) => g.menu_item_id === menuItemId && g.option_id === optionId,
+      )
+      if (existing) {
+        existing.is_required = isRequired
+        existing.sort_order = sortOrder
+        return existing
+      }
+      const row = {
+        menu_item_id: menuItemId,
+        option_id: optionId,
+        is_required: isRequired,
+        sort_order: sortOrder,
+        created_at: new Date().toISOString(),
+      }
+      d.menuItemOptionGroups.push(row)
+      return row
+    })
+  }
+  const { data, error } = await supabase
+    .from('menu_item_option_groups')
+    .upsert(
+      { menu_item_id: menuItemId, option_id: optionId, is_required: isRequired, sort_order: sortOrder },
+      { onConflict: 'menu_item_id,option_id' },
+    )
+    .select()
+    .single()
+  if (error) throw new Error(friendlyError(error, 'Gắn nhóm tuỳ chọn'))
+  return data
+}
+
+/** Gỡ 1 nhóm tuỳ chọn khỏi 1 món (không xoá nhóm/lựa chọn dùng chung). */
+export async function detachOptionGroup(menuItemId, optionId) {
+  if (!supabase) {
+    return withLocal((d) => {
+      d.menuItemOptionGroups = d.menuItemOptionGroups.filter(
+        (g) => !(g.menu_item_id === menuItemId && g.option_id === optionId),
+      )
+      return true
+    })
+  }
+  const { error } = await supabase
+    .from('menu_item_option_groups')
+    .delete()
+    .eq('menu_item_id', menuItemId)
+    .eq('option_id', optionId)
+  if (error) throw new Error(friendlyError(error, 'Gỡ nhóm tuỳ chọn'))
+  return true
+}
+
+/* ---------------------------- ORDERS ---------------------------- */
 export async function listOrders({ from, to, limit } = {}) {
   if (!supabase) {
     let orders = readLocal().orders
@@ -228,7 +591,7 @@ async function fetchOrderItems(orderIds) {
     const chunk = orderIds.slice(i, i + CHUNK)
     const { data, error } = await supabase
       .from('order_items')
-      .select('order_id, menu_item_id, name_snapshot, price_snapshot, qty, note')
+      .select('id, order_id, menu_item_id, name_snapshot, price_snapshot, qty, note')
       .in('order_id', chunk)
       .order('created_at', { ascending: true })
     if (error) {
@@ -236,6 +599,11 @@ async function fetchOrderItems(orderIds) {
       if (/does not exist|could not find|not found|schema cache/i.test(error.message || '')) return map
       throw new Error(friendlyError(error, 'Tải món của đơn'))
     }
+
+    // Lấy tuỳ chọn của các dòng món vừa tải (bảng `order_item_options`).
+    const itemIds = (data || []).map((r) => r.id)
+    const optMap = await fetchOrderItemOptions(itemIds)
+
     for (const r of data || []) {
       const list = map.get(r.order_id) || []
       list.push({
@@ -244,8 +612,47 @@ async function fetchOrderItems(orderIds) {
         price: r.price_snapshot,
         qty: r.qty,
         note: r.note || '',
+        options: optMap.get(r.id) || [],
       })
       map.set(r.order_id, list)
+    }
+  }
+  return map
+}
+
+/**
+ * Lấy tuỳ chọn của các dòng món, gom theo `order_item_id`.
+ *
+ * Trả về Map<orderItemId, options[]>.
+ * Nếu bảng `order_item_options` chưa tồn tại (chưa chạy migration) -> Map rỗng,
+ * app vẫn chạy bình thường (đơn không có tuỳ chọn).
+ */
+async function fetchOrderItemOptions(orderItemIds) {
+  const map = new Map()
+  if (!orderItemIds.length) return map
+
+  const CHUNK = 100
+  for (let i = 0; i < orderItemIds.length; i += CHUNK) {
+    const chunk = orderItemIds.slice(i, i + CHUNK)
+    const { data, error } = await supabase
+      .from('order_item_options')
+      .select('order_item_id, option_id, menu_item_option_id, name_snapshot, price_delta_snapshot')
+      .in('order_item_id', chunk)
+      .order('created_at', { ascending: true })
+    if (error) {
+      // Bảng chưa tồn tại -> không có tuỳ chọn, vẫn hiển thị đơn bình thường.
+      if (/does not exist|could not find|not found|schema cache/i.test(error.message || '')) return map
+      throw new Error(friendlyError(error, 'Tải tuỳ chọn của đơn'))
+    }
+    for (const r of data || []) {
+      const list = map.get(r.order_item_id) || []
+      list.push({
+        option_id: r.option_id,
+        menu_item_option_id: r.menu_item_option_id,
+        name: r.name_snapshot,
+        price_delta: r.price_delta_snapshot,
+      })
+      map.set(r.order_item_id, list)
     }
   }
   return map
@@ -273,6 +680,21 @@ export async function createOrder(order) {
     note: (it.note || '').trim().slice(0, 200),
   }))
   const total = items.reduce((s, it) => s + it.price * it.qty, 0)
+
+  // Tuỳ chọn khách chọn, gom theo index dòng món.
+  // Server dùng `line` để map đúng dòng món -> nhóm tuỳ chọn.
+  const itemOptions = (order.itemOptions || [])
+    .map((entry, line) => ({
+      line,
+      options: (entry?.options || []).map((o) => ({
+        optionId: o.option_id || o.optionId || null,
+        menuItemOptionId: o.menu_item_option_id || o.menuItemOptionId || null,
+        name: o.name || '',
+        priceDelta: Math.round(Number(o.price_delta ?? o.priceDelta) || 0),
+      })),
+    }))
+    .filter((e) => e.options.length > 0)
+
   const payload = {
     code: order.code || randomOrderCode(),
     customer_name: (order.customer_name || '').trim(),
@@ -281,6 +703,7 @@ export async function createOrder(order) {
     table_no: (order.table_no || '').trim(),
     note: (order.note || '').trim(),
     items,
+    itemOptions,
     total,
     status: 'new',
     // Token khách quen (từ QR). Server dùng nó để lấy thông tin trong DB.
@@ -308,7 +731,6 @@ export async function createOrder(order) {
       return row
     })
   }
-
   // --- Đường mới: RPC create_order (ghi orders + order_items trong 1 transaction)
   // Nếu hàm RPC chưa được tạo trong DB (chưa chạy migration), ta phát hiện
   // và dùng đường cũ (insert thẳng vào bảng orders) để app vẫn chạy được.
@@ -354,6 +776,19 @@ async function tryCreateOrderRpc(payload) {
   //   3. MỚI (8 tham số)        -> có địa chỉ + token khách quen
   // Thử bản mới trước; nếu báo lỗi về tham số -> thử bản cũ.
   const attempts = [
+    // Bản mới nhất (9 tham số): có địa chỉ + token khách quen + tuỳ chọn
+    {
+      p_code: payload.code,
+      p_customer_name: payload.customer_name,
+      p_customer_phone: payload.customer_phone,
+      p_customer_address: payload.customer_address,
+      p_table_no: payload.table_no,
+      p_note: payload.note,
+      p_items: payload.items,
+      p_customer_token: payload.customer_token,
+      p_item_options: payload.itemOptions,
+    },
+    // Bản 8 tham số: có địa chỉ + token, chưa có tuỳ chọn
     {
       p_code: payload.code,
       p_customer_name: payload.customer_name,
@@ -404,12 +839,20 @@ async function tryCreateOrderRpc(payload) {
 
   // Phiên bản mới: server trả về jsonb đầy đủ
   if (typeof data === 'object' && data !== null && data.id) {
+    const serverItems = Array.isArray(data.items) && data.items.length ? data.items : payload.items
     return {
       ...base,
       id: data.id,
       code: data.code || payload.code,
       total: Number(data.total) || 0,
-      items: Array.isArray(data.items) && data.items.length ? data.items : payload.items,
+      items: serverItems.map((it, i) => ({
+        ...it,
+        // Server đã trả kèm `options` (đã chốt giá). Nếu không có (bản cũ),
+        // gắn lại options client gửi lên để hoá đơn vẫn hiển thị đúng.
+        options: Array.isArray(it.options) && it.options.length
+          ? it.options
+          : payload.itemOptions[i]?.options || [],
+      })),
     }
   }
 

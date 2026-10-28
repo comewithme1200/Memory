@@ -139,6 +139,20 @@ export default function OrdersPage() {
                       <span className="oi-qty">{it.qty}×</span>
                       <span className="oi-name">{it.name}</span>
                       <span className="oi-price muted">{fmtVND(it.price * it.qty)}</span>
+                      {it.options?.length > 0 && (
+                        <div className="oi-opts">
+                          {it.options.map((op, k) => (
+                            <span key={k} className="oi-opt">
+                              {op.name}
+                              {op.price_delta
+                                ? ` (${op.price_delta > 0 ? '+' : '−'}${fmtVND(
+                                    Math.abs(op.price_delta),
+                                  )})`
+                                : ''}
+                            </span>
+                          ))}
+                        </div>
+                      )}
                       {it.note?.trim() && <div className="oi-note">📝 {it.note}</div>}
                     </li>
                   ))}

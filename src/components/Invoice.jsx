@@ -52,6 +52,18 @@ export default function Invoice({ order }) {
               <tr key={`${it.id}-${i}`}>
                 <td>
                   {it.name}
+                  {it.options?.length > 0 && (
+                    <div className="inv-item-opts">
+                      {it.options.map((o, k) => (
+                        <span key={k}>
+                          + {o.name}
+                          {o.price_delta
+                            ? ` (${o.price_delta > 0 ? '+' : '−'}${fmtVND(Math.abs(o.price_delta))})`
+                            : ''}
+                        </span>
+                      ))}
+                    </div>
+                  )}
                   {it.note?.trim() && <div className="inv-item-note">* {it.note}</div>}
                 </td>
                 <td className="t-r">{it.qty}</td>

@@ -189,6 +189,49 @@ Sau khi chạy, kiểm tra bằng `npm run check:qr`:
   ĐÃ CÓ  RPC `summarize_orders` đã bị chặn cho khách (anon)
 ```
 
+### Bước 2e — (Mới) Tuỳ chọn món kiểu GrabFood
+
+> Bước này **bắt buộc** nếu bạn muốn dùng tính năng *tuỳ chọn món*
+> (Size to +5k / Size nhỏ −5k, Topping, Mức cay…). Nếu không chạy, trang
+> `#/quan-tri/tuy-chon` sẽ báo lỗi *"Could not find the table 'public.options'"*.
+
+1. Vào **SQL Editor** → **New query**
+2. Dán toàn bộ nội dung file [`supabase/migration-options.sql`](supabase/migration-options.sql)
+3. Bấm **Run**
+
+Script này tạo 4 bảng (mô hình nhiều-nhiều):
+
+| Bảng | Vai trò |
+|---|---|
+| `options` | Nhóm tuỳ chọn dùng chung: `Size`, `Topping`, `Mức cay` |
+| `menu_item_options` | Lựa chọn cụ thể của 1 món: *Size to +5k*, *Size nhỏ −5k* |
+| `menu_item_option_groups` | Bảng trung gian: gắn nhóm vào món (1 món ↔ nhiều nhóm, 1 nhóm ↔ nhiều món) |
+| `order_item_options` | Bảng trung gian: lưu tuỳ chọn khách đã chọn trong đơn (1 dòng món ↔ nhiều tuỳ chọn) |
+
+Đồng thời thêm cột `order_items.line_index` và nâng RPC `create_order(...)` lên **9 tham số**
+(thêm `p_item_options`).
+
+> ⚠️ **Giá do server tính.** `price_delta` được tra lại từ DB trong `create_order`,
+> không tin giá client gửi lên. Client có thể gửi `priceDelta: 999999` nhưng server
+> vẫn lấy đúng `price_delta` thật của lựa chọn đó.
+
+4. *(Tuỳ chọn)* Nạp dữ liệu mẫu — dán file
+   [`supabase/seed-options.sql`](supabase/seed-options.sql) vào SQL Editor và **Run**.
+   Tạo sẵn: Size (to/vừa/nhỏ), Topping (trứng/gà), Mức cay — gắn cho Xôi thập cẩm,
+   Bánh mì, Mì trộn. Chạy lại nhiều lần không tạo trùng.
+
+   > Hoặc không cần SQL: vào trang quản trị **Tuỳ chọn** để tự thêm nhóm/lựa chọn.
+
+Sau khi chạy, kiểm tra bằng `npm run check:options`:
+```
+  ĐÃ CÓ  Bảng `options`
+  ĐÃ CÓ  Bảng `menu_item_options`
+  ĐÃ CÓ  Bảng `menu_item_option_groups`
+  ĐÃ CÓ  Bảng `order_item_options`
+  ĐÃ CÓ  Cột `order_items.line_index`
+  ĐÃ CÓ  RPC `create_order` đã có tham số `p_item_options`
+```
+
 ### Bước 3 — Tạo tài khoản chủ quán
 
 1. Menu trái → **Authentication** → **Users** (tab)

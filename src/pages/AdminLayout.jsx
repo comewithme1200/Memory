@@ -31,6 +31,9 @@ export default function AdminLayout() {
         <NavLink className="tab" to="/quan-tri/mon">
           🍽️ Món ăn
         </NavLink>
+        <NavLink className="tab" to="/quan-tri/tuy-chon">
+          ⚙️ Tuỳ chọn
+        </NavLink>
         <NavLink className="tab" to="/quan-tri/orders">
           🧾 Đơn hàng
         </NavLink>
