@@ -47,6 +47,16 @@ body {
   line-height: 1.5;
 }
 
+/* Bỏ nền xám/viền xanh mặc định của iOS Safari khi bấm nút.
+   Mặc định nó làm nút "chớp" xanh xám, trông như bị lỗi. */
+button,
+a,
+input,
+select,
+textarea {
+  -webkit-tap-highlight-color: transparent;
+}
+
 h1,
 h2,
 h3 {
@@ -259,9 +269,33 @@ a {
   transition: all 0.15s ease;
 }
 
-.chip:hover {
-  border-color: var(--brand);
-  color: var(--brand);
+/* CHỈ áp hiệu ứng hover trên thiết bị có CHUỘT.
+ *
+ * LÝ DO: trên điện thoại, `:hover` "dính" lại sau khi bấm (trình duyệt
+ * giả lập trạng thái hover cho tới khi bấm chỗ khác). Mà `.chip:hover`
+ * có specificity CAO HƠN `.chip-active`, nên chip đang được chọn sẽ bị
+ * đổi chữ từ trắng sang cam trên nền cam -> MẤT CHỮ, không đọc được.
+ *
+ * `@media (hover: hover)` chỉ bật khi thiết bị thật sự có chuột, nên trên
+ * điện thoại chip luôn hiện đúng màu đang chọn.
+ */
+@media (hover: hover) {
+  .chip:hover {
+    border-color: var(--brand);
+    color: var(--brand);
+  }
+
+  /* Chip đang chọn: giữ nền cam + chữ trắng, không đổi khi rê chuột. */
+  .chip-active:hover {
+    background: var(--brand);
+    border-color: var(--brand);
+    color: #fff;
+  }
+}
+
+/* Bỏ viền xanh mặc định của Safari/iOS khi bấm (nó làm nút trông "lạ"). */
+.chip:active {
+  -webkit-tap-highlight-color: transparent;
 }
 
 .chip-active {
@@ -294,9 +328,18 @@ a {
   transition: all 0.15s ease;
 }
 
-.tab:hover {
-  background: var(--bg);
-  color: var(--ink);
+/* Xem giải thích ở `.chip` — hover trên điện thoại bị "dính" và đè lên
+   trạng thái đang chọn, làm mất chữ. Chỉ bật khi có chuột thật. */
+@media (hover: hover) {
+  .tab:hover {
+    background: var(--bg);
+    color: var(--ink);
+  }
+
+  .tab.active:hover {
+    background: var(--brand-soft);
+    color: var(--brand-dark);
+  }
 }
 
 .tab.active {
@@ -444,9 +487,20 @@ a {
   min-height: 34px;
 }
 
-.opt-chip:hover:not(:disabled) {
-  border-color: var(--brand);
-  color: var(--brand);
+/* Xem giải thích ở `.chip` — hover trên điện thoại bị "dính" lại sau khi
+   bấm, nên trạng thái đang chọn bị đè mất màu. Chỉ bật khi có chuột thật. */
+@media (hover: hover) {
+  .opt-chip:hover:not(:disabled) {
+    border-color: var(--brand);
+    color: var(--brand);
+  }
+
+  /* Chip đang chọn giữ nguyên màu khi rê chuột. */
+  .opt-chip-on:hover:not(:disabled) {
+    border-color: var(--brand);
+    background: var(--brand-soft);
+    color: var(--brand-dark);
+  }
 }
 
 .opt-chip-on {
@@ -1781,6 +1835,40 @@ a {
   font-size: 19px;
   font-weight: 700;
   margin: 4px 0 2px;
+}
+
+/* Badge "đơn mới vừa vào" — hiện khi Realtime báo có đơn mới.
+   Nhấp nháy nhẹ để chủ quán đang cầm điện thoại nhận ra ngay. */
+.flash-new {
+  display: inline-block;
+  margin-left: 10px;
+  padding: 3px 10px;
+  border-radius: 999px;
+  background: var(--ok-soft);
+  border: 1px solid #7ee2a8;
+  color: var(--ok);
+  font-size: 13px;
+  font-weight: 700;
+  vertical-align: middle;
+  animation: flash-pulse 1.2s ease-in-out 3;
+}
+
+@keyframes flash-pulse {
+  0%,
+  100% {
+    transform: scale(1);
+    opacity: 1;
+  }
+  50% {
+    transform: scale(1.06);
+    opacity: 0.7;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .flash-new {
+    animation: none;
+  }
 }
 
 .page-sub {

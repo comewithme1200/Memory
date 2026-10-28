@@ -13,6 +13,7 @@
     "check": "node scripts/check-supabase.mjs",
     "check:qr": "node scripts/check-qr-schema.mjs",
     "check:options": "node scripts/check-options-schema.mjs",
+    "check:realtime": "node scripts/check-realtime.mjs",
     "test:price": "node scripts/test-order-price.mjs",
     "test:item-price": "node scripts/test-item-price.mjs",
     "test:payment": "node scripts/test-payment.mjs",

@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { flushSync } from 'react-dom'
 import { listOrders, updateOrderStatus, deleteOrder, updateOrderPayment } from '../lib/db.js'
+import { useOrdersRealtime } from '../lib/useOrdersRealtime.js'
 import { fmtVND, fmtTime } from '../lib/format.js'
 import Invoice from '../components/Invoice.jsx'
 import PrintPortal from '../components/PrintPortal.jsx'
@@ -45,10 +46,47 @@ export default function OrdersPage() {
 
   useEffect(() => {
     reload()
-    // tự làm mới mỗi 15s để bếp thấy đơn mới ngay
-    const t = setInterval(reload, 15000)
-    return () => clearInterval(t)
   }, [reload])
+
+  const reloadRef = useRef(reload)
+  reloadRef.current = reload
+
+  // Đơn mới vừa tới -> hiện bảng "có đơn mới" cho chủ quán biết ngay.
+  const [flashNew, setFlashNew] = useState(false)
+  const flashTimer = useRef(null)
+
+  const onRealtimeChange = useCallback((payload) => {
+    reloadRef.current()
+
+    // Chỉ báo "đơn mới" khi có đơn MỚI (INSERT), không phải khi đơn cũ
+    // được sửa/xoá (UPDATE/DELETE) — sửa trạng thái là việc của chủ quán.
+    if (payload.eventType === 'INSERT') {
+      setFlashNew(true)
+      clearTimeout(flashTimer.current)
+      flashTimer.current = setTimeout(() => setFlashNew(false), 8000)
+    }
+  }, [])
+
+  const { live } = useOrdersRealtime(onRealtimeChange)
+
+  useEffect(() => () => clearTimeout(flashTimer.current), [])
+
+  /**
+   * Polling dự phòng — chu kỳ TỰ THÍCH ỨNG theo trạng thái realtime.
+   *
+   *   - Realtime ĐANG CHẠY  -> poll mỗi 30s (chỉ là lưới an toàn khi
+   *     WebSocket bị đứt: mất mạng, điện thoại ngủ).
+   *   - Realtime CHƯA CHẠY  -> poll mỗi 5s, để vẫn thấy đơn mới gần như
+   *     tức thì. (Thường là do chưa chạy supabase/migration-realtime.sql
+   *     trên Supabase — xem README.)
+   *
+   * Cả hai đều gọi `reload` nên hành vi giống nhau, chỉ khác độ trễ.
+   */
+  useEffect(() => {
+    const period = live ? 30000 : 5000
+    const t = setInterval(reload, period)
+    return () => clearInterval(t)
+  }, [reload, live])
 
   const setStatus = async (id, status) => {
     try {
@@ -173,7 +211,14 @@ export default function OrdersPage() {
 
   return (
     <>
-      <h2 className="page-heading">Đơn hàng</h2>
+      <h2 className="page-heading">
+        Đơn hàng
+        {flashNew && (
+          <span className="flash-new" role="status">
+            🔔 Đơn mới vừa vào!
+          </span>
+        )}
+      </h2>
       <p className="page-sub">
         Mới <strong>{counts.new}</strong> · Đang làm <strong>{counts.preparing}</strong> · Hoàn thành{' '}
         <strong>{counts.done}</strong>

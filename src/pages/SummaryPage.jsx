@@ -1,5 +1,6 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { summarize } from '../lib/db.js'
+import { useOrdersRealtime } from '../lib/useOrdersRealtime.js'
 import { fmtVND, fmtNumber, dateKey, startOfDay, endOfDay } from '../lib/format.js'
 
 const PRESETS = [
@@ -43,14 +44,28 @@ export default function SummaryPage() {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
 
-  useEffect(() => {
-    setLoading(true)
+  // Hàm nạp lại tổng kết, tách riêng để dùng cho cả lần đầu, đổi bộ lọc
+  // và khi Realtime báo có đơn mới.
+  const load = useCallback(() => {
     const { from, to } = rangeFor(preset)
-    summarize({ from, to })
+    return summarize({ from, to })
       .then(setData)
       .catch((e) => setError(e.message || 'Không tổng kết được'))
-      .finally(() => setLoading(false))
   }, [preset])
+
+  useEffect(() => {
+    setLoading(true)
+    load().finally(() => setLoading(false))
+  }, [load])
+
+  // Tổng kết cũng cập nhật realtime -> số suất bán ra hiện ngay khi có
+  // đơn mới, không phải bấm "Tải lại" hay chờ polling.
+  const loadRef = useRef(load)
+  loadRef.current = load
+  const onChange = useCallback(() => {
+    loadRef.current()
+  }, [])
+  useOrdersRealtime(onChange)
 
   const maxQty = useMemo(() => Math.max(1, ...data.rows.map((r) => r.qty)), [data.rows])
 

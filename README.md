@@ -81,6 +81,9 @@ Mở trình duyệt tại: **http://localhost:5173**
 | `npm run preview` | Xem bản build tại http://localhost:4173 |
 | `npm run check` | Kiểm tra kết nối Supabase + hành vi RLS (gồm cả bảng trung gian) |
 | `npm run check:qr` | Kiểm tra riêng phần **khách quen / mã QR** (bảng `customers`, RPC, quyền) |
+| `npm run check:realtime` | Kiểm tra **Realtime** (đơn mới tự hiện, không cần reload) |
+| `npm run check:options` | Kiểm tra phần **tuỳ chọn món** (bảng `options`, `menu_item_options`) |
+| `npm run test:item-price` | Kiểm tra giá món đã cộng `price_delta` của tuỳ chọn chưa |
 | `npm run test:payment` | Kiểm tra phần **thanh toán** (cột `payment_method`, `is_paid`, RPC `create_order`) |
 | `npm run verify:migration` | So khớp dữ liệu đơn cũ (JSONB) với bảng `order_items` |
 | `npm run deploy` | Build + đẩy lên GitHub Pages (cần `gh-pages`) |
@@ -278,6 +281,36 @@ Kiểm tra bằng `npm run test:payment`:
 ✓ Tính năng thanh toán hoạt động đúng.
 ```
 
+### Bước 2g — (Mới) Realtime: đơn mới tự hiện, không cần reload
+
+> Bước này làm trang **Đơn hàng** trong khu vực quản trị tự cập nhật
+> ngay khi có đơn mới, thay vì phải tải lại trang.
+>
+> **Không bắt buộc** — nếu chưa chạy, app vẫn hoạt động bình thường, chỉ là
+> chuyển sang tự làm mới mỗi **5 giây** (thay vì realtime tức thì).
+
+1. Vào **SQL Editor** → **New query**
+2. Dán toàn bộ nội dung file [`supabase/migration-realtime.sql`](supabase/migration-realtime.sql)
+3. Bấm **Run**
+
+File này:
+- bật `replica identity full` cho bảng `orders` (để payload có đủ thông tin)
+- đưa bảng `orders` vào publication `supabase_realtime`
+- thêm policy cho phép chủ quán (`authenticated`) nhận sự kiện Realtime
+
+Kiểm tra bằng `npm run check:realtime`:
+
+```
+  OK   Đã subscribe kênh WebSocket thành công.
+  OK   NHẬN ĐƯỢC sự kiện Realtime!
+       event = INSERT, table = orders
+✓ Realtime hoạt động — trang quản trị tự thêm đơn mới.
+```
+
+> **Lưu ý:** script kiểm tra cần `VITE_ADMIN_EMAIL` + `VITE_ADMIN_PASSWORD`
+> trong file `.env` để đăng nhập (Realtime có kiểm tra RLS, khách không nhận
+> được sự kiện của bảng `orders`).
+
 #### 🏦 Đặt ảnh QR ngân hàng
 
 Mặc định app hiện một khung placeholder. Để hiện **ảnh QR thật của bạn**:
@@ -472,6 +505,7 @@ Bấm **"🖨️ In lại"** ở đơn đã hoàn thành để in lại.
 │   ├── migration-customers-qr.sql # (Nâng cấp) bảng customers + RPC khách quen/QR
 │   ├── migration-options.sql  # (Nâng cấp) bảng options + tuỳ chọn món
 │   ├── migration-payment.sql  # (Nâng cấp) cột payment_method + is_paid (thanh toán)
+│   ├── migration-realtime.sql  # (Nâng cấp) bật Realtime cho bảng orders (đơn mới tự hiện)
 │   ├── fix-create-order-price.sql # Bản vá giá của RPC create_order (sinh tự động)
 │   ├── fix-summarize-permissions.sql  # Gỡ quyền xem doanh thu cho khách
 │   ├── fix-create-order-return.sql   # Đổi create_order trả về jsonb
@@ -479,6 +513,9 @@ Bấm **"🖨️ In lại"** ở đơn đã hoàn thành để in lại.
 ├── scripts/
 │   ├── check-supabase.mjs     # Kiểm tra kết nối + RLS (npm run check)
 │   ├── check-qr-schema.mjs    # Kiểm tra phần khách quen/QR (npm run check:qr)
+│   ├── check-realtime.mjs     # Kiểm tra Realtime (npm run check:realtime)
+│   ├── check-options-schema.mjs # Kiểm tra phần tuỳ chọn (npm run check:options)
+│   ├── test-item-price.mjs    # Kiểm tra giá đã cộng price_delta (npm run test:item-price)
 │   ├── test-payment.mjs       # Kiểm tra phần thanh toán (npm run test:payment)
 │   ├── test-customers-local.mjs # Test luồng khách quen ở chế độ demo (npm run test:local)
 │   └── verify-migration.mjs   # So khớp đơn cũ vs order_items (npm run verify:migration)
