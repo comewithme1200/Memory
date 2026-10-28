@@ -222,7 +222,19 @@ Script này tạo 4 bảng (mô hình nhiều-nhiều):
 
    > Hoặc không cần SQL: vào trang quản trị **Tuỳ chọn** để tự thêm nhóm/lựa chọn.
 
-Sau khi chạy, kiểm tra bằng `npm run check:options`:
+5. **Bắt buộc** — chạy file vá lỗi giá:
+   [`supabase/fix-create-order-price.sql`](supabase/fix-create-order-price.sql)
+
+   > ⚠️ **Bắt buộc**, nếu bỏ qua thì giá hiển thị trên hoá đơn **SẼ SAI**:
+   > mỗi món có tuỳ chọn đều bị tính bằng **giá gốc**, mất hết phần
+   > +5k / −5k của Size.
+   >
+   > Nguyên nhân: `jsonb_agg(eo->'options')` gom thành **mảng lồng mảng**
+   > `[[{...}]]` → `o->>'menuItemOptionId'` = NULL → không join được
+   > `menu_item_options` → `sum(price_delta)` = NULL → giá mất sạch phần delta.
+
+6. Kiểm tra bằng `npm run check:options` và `npm run test:price`:
+
 ```
   ĐÃ CÓ  Bảng `options`
   ĐÃ CÓ  Bảng `menu_item_options`
@@ -230,6 +242,12 @@ Sau khi chạy, kiểm tra bằng `npm run check:options`:
   ĐÃ CÓ  Bảng `order_item_options`
   ĐÃ CÓ  Cột `order_items.line_index`
   ĐÃ CÓ  RPC `create_order` đã có tham số `p_item_options`
+```
+
+```
+Tổng MONG ĐỢI: 95.000 đ
+Tổng THỰC TẾ: 95.000 đ
+✅ GIÁ ĐÚNG
 ```
 
 ### Bước 3 — Tạo tài khoản chủ quán
