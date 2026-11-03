@@ -75,8 +75,12 @@ self.addEventListener('push', (event) => {
     body: data.body || '',
     icon: data.icon || `${base}icon-192.png`,
     badge: data.badge || `${base}icon-192.png`,
+    // `tag` giống nhau -> thông báo mới THAY THẾ cái cũ (thay vì cộng dồn).
+    // Đây là lưới an toàn: nếu vì lý do gì đó server gửi trùng 2 lần, chủ
+    // quán vẫn chỉ thấy 1 thông báo cho mỗi đơn.
     tag: data.tag || 'quan-an-sang-order',
-    renotify: true,
+    // KHÔNG bật `renotify` -> tránh kêu chuông lại khi thông báo bị thay thế.
+    renotify: false,
     requireInteraction: false,
     // iOS: `silent` chưa được hỗ trợ đầy đủ, nhưng đặt false để chuông
     // mặc định của hệ thống được phát.

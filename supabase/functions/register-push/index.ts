@@ -99,6 +99,7 @@ Deno.serve(async (req) => {
       user_id: userId,
       user_agent: String(body?.userAgent || '').slice(0, 500) || null,
       platform: String(body?.platform || '').slice(0, 100) || null,
+      device_id: String(body?.deviceId || '').slice(0, 100) || null,
       updated_at: new Date().toISOString(),
     }
 
@@ -113,6 +114,7 @@ Deno.serve(async (req) => {
       p_user_id: row.user_id,
       p_user_agent: row.user_agent,
       p_platform: row.platform,
+      p_device_id: row.device_id,
     })
 
     if (!rpcErr) {
@@ -137,6 +139,29 @@ Deno.serve(async (req) => {
     }
 
     console.log(`✓ Đã đăng ký push cho user ${userId} (id=${savedId})`)
+
+    // --- Dọn endpoint cũ của CÙNG thiết bị ---
+    //
+    // Mỗi lần đăng ký lại, iOS sinh endpoint MỚI cho cùng một máy. Endpoint
+    // cũ vẫn còn trong bảng -> server gửi push cho tất cả -> chủ quán thấy
+    // N thông báo giống hệt cho 1 đơn.
+    //
+    // `device_id` là id ổn định do client tự sinh (lưu localStorage) -> xoá
+    // mọi endpoint khác có cùng device_id là an toàn (chỉ xoá của chính máy
+    // này, không đụng máy khác).
+    if (row.device_id) {
+      const { data: olds, error: oldErr } = await admin
+        .from('push_subscriptions')
+        .delete()
+        .eq('device_id', row.device_id)
+        .neq('endpoint', sub.endpoint)
+        .select('id')
+
+      if (!oldErr && olds && olds.length > 0) {
+        console.log(`🧹 Đã xoá ${olds.length} endpoint cũ của thiết bị ${row.device_id}.`)
+      }
+    }
+
     return json({ ok: true, id: savedId })
   } catch (e) {
     console.error('register-push lỗi:', e)

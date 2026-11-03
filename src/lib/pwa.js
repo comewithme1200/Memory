@@ -561,6 +561,7 @@ export async function registerPushWithServer(subscription) {
         subscription,
         userAgent: navigator.userAgent,
         platform: navigator.platform || '',
+        deviceId: getDeviceId(),
       },
     })
 
@@ -600,6 +601,41 @@ export async function registerPushWithServer(subscription) {
  * key...) thì coi như chưa từng gửi -> gửi lại.
  */
 const SYNCED_KEY = 'quan-an-sang:push-synced'
+
+/**
+ * Định danh thiết bị ỔN ĐỊNH (dùng để dọn subscription cũ).
+ *
+ * ---------------------------------------------------------------------------
+ * VÌ SAO CẦN?
+ *
+ * Mỗi lần bấm "Đăng ký push" (hoặc "Đặt lại push"), iOS sinh MỘT ENDPOINT MỚI
+ * cho cùng một chiếc máy. Endpoint cũ vẫn nằm trong bảng `push_subscriptions`
+ * -> server gửi push cho mọi endpoint -> chủ quán thấy N thông báo giống
+ * hệt cho 1 đơn.
+ *
+ * Không có "device id" chuẩn trên web (iOS không cho đọc IDFA). Ta tự sinh 1
+ * id ngẫu nhiên, lưu trong `localStorage` -> ỔN ĐỊNH theo từng bản cài app.
+ *
+ * Khi đăng ký subscription mới, server sẽ xoá mọi endpoint cũ có cùng
+ * `device_id` -> chỉ còn 1 subscription cho mỗi thiết bị.
+ */
+const DEVICE_ID_KEY = 'quan-an-sang:device-id'
+
+export function getDeviceId() {
+  try {
+    let id = localStorage.getItem(DEVICE_ID_KEY)
+    if (!id) {
+      const rand =
+        globalThis.crypto?.randomUUID?.() ||
+        `${Date.now()}-${Math.random().toString(36).slice(2, 12)}`
+      id = String(rand)
+      localStorage.setItem(DEVICE_ID_KEY, id)
+    }
+    return id
+  } catch {
+    return ''
+  }
+}
 
 function getSyncedEndpoints() {
   try {

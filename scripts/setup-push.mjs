@@ -317,7 +317,8 @@ create or replace function public.upsert_push_subscription(
   p_auth_key   text,
   p_user_id    uuid default null,
   p_user_agent text default null,
-  p_platform   text default null
+  p_platform   text default null,
+  p_device_id  text default null
 )
 returns public.push_subscriptions
 language plpgsql
@@ -329,16 +330,26 @@ declare
   v_user uuid;
 begin
   v_user := coalesce(p_user_id, auth.uid());
+
+  -- Dọn endpoint CŨ của cùng thiết bị (cùng device_id) -> tránh nhận nhiều
+  -- thông báo trùng cho 1 đơn (iOS sinh endpoint mới mỗi lần đăng ký lại).
+  if p_device_id is not null and p_device_id <> '' then
+    delete from public.push_subscriptions
+    where device_id = p_device_id
+      and endpoint <> p_endpoint;
+  end if;
+
   insert into public.push_subscriptions as t
-    (endpoint, p256dh, auth, user_id, user_agent, platform)
+    (endpoint, p256dh, auth, user_id, user_agent, platform, device_id)
   values
-    (p_endpoint, p_p256dh, p_auth_key, v_user, p_user_agent, p_platform)
+    (p_endpoint, p_p256dh, p_auth_key, v_user, p_user_agent, p_platform, p_device_id)
   on conflict (endpoint) do update
     set p256dh      = excluded.p256dh,
         auth        = excluded.auth,
         user_id     = coalesce(excluded.user_id, t.user_id),
         user_agent  = excluded.user_agent,
         platform    = excluded.platform,
+        device_id   = coalesce(excluded.device_id, t.device_id),
         updated_at  = now()
   returning * into v_row;
   return v_row;
@@ -378,12 +389,21 @@ create table if not exists public.push_subscriptions (
   user_id     uuid references auth.users(id) on delete cascade,
   user_agent  text,
   platform    text,
+  -- Id ổn định do client tự sinh (localStorage) -> dọn endpoint cũ khi iOS
+  -- sinh endpoint mới cho cùng 1 máy (tránh nhiều thông báo trùng).
+  device_id   text,
   created_at  timestamptz not null default now(),
   updated_at  timestamptz not null default now()
 );
 
+-- Thêm cột device_id nếu bảng đã tồn tại từ trước (chạy lại nhiều lần OK).
+alter table public.push_subscriptions add column if not exists device_id text;
+
 create index if not exists idx_push_subscriptions_user_id
   on public.push_subscriptions (user_id);
+
+create index if not exists idx_push_subscriptions_device_id
+  on public.push_subscriptions (device_id);
 
 drop policy if exists "push_subs own read" on public.push_subscriptions;
 create policy "push_subs own read"

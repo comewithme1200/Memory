@@ -56,6 +56,14 @@ create table if not exists public.push_subscriptions (
   updated_at  timestamptz not null default now()
 );
 
+-- Cột `device_id`: id ổn định do client tự sinh (lưu localStorage).
+-- Dùng để dọn endpoint cũ khi iOS sinh endpoint mới cho cùng một máy
+-- -> tránh nhận nhiều thông báo trùng cho 1 đơn.
+alter table public.push_subscriptions add column if not exists device_id text;
+
+create index if not exists idx_push_subscriptions_device_id
+  on public.push_subscriptions (device_id);
+
 -- Xem nhanh các thiết bị đang đăng ký.
 create index if not exists idx_push_subscriptions_user_id
   on public.push_subscriptions (user_id);
@@ -153,7 +161,8 @@ create or replace function public.upsert_push_subscription(
   p_auth_key   text,
   p_user_id    uuid default null,
   p_user_agent text default null,
-  p_platform   text default null
+  p_platform   text default null,
+  p_device_id  text default null
 )
 returns public.push_subscriptions
 language plpgsql
@@ -167,16 +176,31 @@ begin
   -- Ưu tiên user_id được truyền vào; nếu không thì lấy người đang đăng nhập.
   v_user := coalesce(p_user_id, auth.uid());
 
+  -- Dọn endpoint CŨ của cùng thiết bị (cùng device_id).
+  --
+  -- Mỗi lần đăng ký lại, iOS sinh endpoint MỚI cho cùng một máy. Endpoint cũ
+  -- vẫn nằm trong bảng -> server gửi push cho tất cả -> chủ quán thấy N
+  -- thông báo giống hệt cho 1 đơn.
+  --
+  -- `device_id` là id ổn định do client tự sinh (lưu trong localStorage) ->
+  -- chỉ xoá endpoint của CHÍNH máy này, không đụng máy khác.
+  if p_device_id is not null and p_device_id <> '' then
+    delete from public.push_subscriptions
+    where device_id = p_device_id
+      and endpoint <> p_endpoint;
+  end if;
+
   insert into public.push_subscriptions as t
-    (endpoint, p256dh, auth, user_id, user_agent, platform)
+    (endpoint, p256dh, auth, user_id, user_agent, platform, device_id)
   values
-    (p_endpoint, p_p256dh, p_auth_key, v_user, p_user_agent, p_platform)
+    (p_endpoint, p_p256dh, p_auth_key, v_user, p_user_agent, p_platform, p_device_id)
   on conflict (endpoint) do update
     set p256dh      = excluded.p256dh,
         auth        = excluded.auth,
         user_id     = coalesce(excluded.user_id, t.user_id),
         user_agent  = excluded.user_agent,
         platform    = excluded.platform,
+        device_id   = coalesce(excluded.device_id, t.device_id),
         updated_at  = now()
   returning * into v_row;
 
@@ -233,7 +257,7 @@ begin
 end;
 $$;
 
-grant execute on function public.upsert_push_subscription(text, text, text, uuid, text, text)
+grant execute on function public.upsert_push_subscription(text, text, text, uuid, text, text, text)
   to authenticated;
 grant execute on function public.delete_push_subscription(text)
   to authenticated;

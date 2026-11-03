@@ -146,7 +146,7 @@ Deno.serve(async (req) => {
     // --- Lấy danh sách thiết bị ---
     const { data: subs, error: subErr } = await admin
       .from('push_subscriptions')
-      .select('id, endpoint, p256dh, auth')
+      .select('id, endpoint, p256dh, auth, device_id, updated_at')
 
     if (subErr) {
       console.error('Lỗi đọc subscriptions:', subErr)
@@ -158,13 +158,57 @@ Deno.serve(async (req) => {
       return json({ ok: true, sent: 0, message: 'Chưa có thiết bị đăng ký push.' })
     }
 
+    // --- Dedupe theo thiết bị ---
+    //
+    // Mỗi lần đăng ký lại, iOS sinh endpoint MỚI cho cùng một máy. Nếu
+    // endpoint cũ chưa bị dọn, server gửi cho tất cả -> chủ quán thấy N
+    // thông báo giống hệt cho 1 đơn.
+    //
+    // Phòng thủ ở tầng server: với mỗi `device_id`, chỉ giữ endpoint được
+    // cập nhật gần nhất. Các endpoint cũ bị xoá luôn.
+    const byDevice = new Map()
+    const noDevice = []
+    for (const s of subs) {
+      if (s.device_id) {
+        const cur = byDevice.get(s.device_id)
+        if (!cur) {
+          byDevice.set(s.device_id, s)
+        } else {
+          const curTime = new Date(cur.updated_at || 0).getTime()
+          const newTime = new Date(s.updated_at || 0).getTime()
+          if (newTime > curTime) {
+            byDevice.set(s.device_id, s)
+            noDevice.push(cur)
+          } else {
+            noDevice.push(s)
+          }
+        }
+      } else {
+        noDevice.push(s)
+      }
+    }
+
+    // Xoá các endpoint trùng thiết bị (đã cũ hơn).
+    const dupIds = noDevice.map((s) => s.id).filter(Boolean)
+    if (dupIds.length > 0) {
+      const { error: dupErr } = await admin
+        .from('push_subscriptions')
+        .delete()
+        .in('id', dupIds)
+      if (!dupErr) {
+        console.log(`🧹 Đã xoá ${dupIds.length} endpoint cũ trùng thiết bị.`)
+      }
+    }
+
+    const targets = [...byDevice.values()]
+
     // --- Gửi ---
     let sent = 0
     let failed = 0
     const staleIds = []
 
     await Promise.all(
-      subs.map(async (s) => {
+      targets.map(async (s) => {
         try {
           await webpush.sendNotification(
             {
@@ -207,8 +251,9 @@ Deno.serve(async (req) => {
       console.log(`🧹 Đã xoá ${staleIds.length} subscription không còn dùng.`)
     }
 
-    console.log(`✓ Đã gửi ${sent}/${subs.length} thông báo đơn mới.`)
-    return json({ ok: true, sent, failed, total: subs.length })  } catch (e) {
+    console.log(`✓ Đã gửi ${sent}/${targets.length} thông báo đơn mới.`)
+    return json({ ok: true, sent, failed, total: targets.length })
+  } catch (e) {
     console.error('send-push lỗi:', e)
     return json({ error: e?.message || 'Lỗi không xác định.' }, 500)
   }
