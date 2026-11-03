@@ -1,11 +1,11 @@
 {
-  "id": "/quan-an-sang",
+  "id": "./",
   "name": "Quán Ăn Sáng — Quản lý",
   "short_name": "Quán Ăn Sáng",
   "description": "Đặt món ăn sáng nhanh — xem thực đơn, chọn món, bếp nhận đơn ngay.",
   "lang": "vi",
   "dir": "ltr",
-  "start_url": "./",
+  "start_url": "./#/quan-tri/orders",
   "scope": "./",
   "display": "standalone",
   "display_override": ["standalone", "minimal-ui", "browser"],
