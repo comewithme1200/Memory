@@ -22,6 +22,7 @@ import {
   getVapidPublicKey,
   ensurePushSynced,
   getPushDiagnostics,
+  unsubscribeFromPush,
 } from '../lib/pwa.js'
 
 export default function AdminLayout() {
@@ -254,6 +255,29 @@ export default function AdminLayout() {
   }, [])
 
   /**
+   * Huỷ đăng ký push trên thiết bị này.
+   *
+   * Dùng khi máy đang kẹt vì subscription cũ (đổi VAPID key) — WebKit sẽ
+   * ném `InvalidStateError` mãi. Huỷ đi rồi bấm "🔄 Đăng ký push" là sạch.
+   */
+  const resetPush = useCallback(async () => {
+    setToast('⏳ Đang huỷ đăng ký push...')
+    const ok = await unsubscribeFromPush()
+    try {
+      localStorage.removeItem('quan-an-sang:vapid-key')
+      localStorage.removeItem('quan-an-sang:push-synced')
+    } catch {
+      /* bỏ qua */
+    }
+    setPushed(false)
+    setToast(
+      ok
+        ? '🗑️ Đã huỷ đăng ký push. Bấm "🔄 Đăng ký push" để đăng ký lại.'
+        : '⚠️ Không có subscription để huỷ.',
+    )
+  }, [])
+
+  /**
    * Chẩn đoán trạng thái push, hiển thị ngay trên máy.
    *
    * Dùng khi chủ quán báo "không nhận được thông báo" -> chụp màn hình
@@ -346,6 +370,14 @@ export default function AdminLayout() {
           title="Xem trạng thái push chi tiết (chụp màn hình gửi lại nếu chưa nhận được thông báo)"
         >
           🩺 Chẩn đoán push
+        </button>
+
+        <button
+          className="btn btn-alert"
+          onClick={resetPush}
+          title="Huỷ đăng ký push trên máy này rồi đăng ký lại (dùng khi bị kẹt do đổi VAPID key)"
+        >
+          🗑️ Đặt lại push
         </button>
 
         {standalone && (
