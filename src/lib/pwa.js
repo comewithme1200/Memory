@@ -282,6 +282,57 @@ export function explainPushError(e) {
 }
 
 /**
+ * Chờ một ServiceWorkerRegistration có worker ở trạng thái `active`.
+ *
+ * WebKit (iOS) ném `InvalidStateError: Subscribing for push requires an active
+ * service worker` nếu `pushManager.subscribe()` được gọi khi registration
+ * mới đăng ký mà worker vẫn đang `installing`/`waiting` (`reg.active === null`).
+ *
+ * @param {ServiceWorkerRegistration} reg
+ * @param {number} timeoutMs
+ * @returns {Promise<ServiceWorkerRegistration|null>}
+ */
+function waitForActiveWorker(reg, timeoutMs = 8000) {
+  if (!reg) return Promise.resolve(null)
+  if (reg.active && reg.active.state === 'activated') return Promise.resolve(reg)
+  if (reg.active) return Promise.resolve(reg)
+
+  return new Promise((resolve) => {
+    let done = false
+    const finish = (value) => {
+      if (done) return
+      done = true
+      clearTimeout(timer)
+      try {
+        worker?.removeEventListener('statechange', onStateChange)
+      } catch {
+        /* bỏ qua */
+      }
+      resolve(value)
+    }
+
+    const onStateChange = () => {
+      const w = reg.installing || reg.waiting || reg.active
+      if (w && w.state === 'activated') finish(reg)
+      else if (w && w.state === 'redundant') finish(null)
+    }
+
+    const worker = reg.installing || reg.waiting || reg.active
+    if (worker) {
+      try {
+        worker.addEventListener('statechange', onStateChange)
+      } catch {
+        /* bỏ qua */
+      }
+      // Trạng thái có thể đã đổi giữa lúc lấy worker và lúc gắn listener.
+      onStateChange()
+    }
+
+    const timer = setTimeout(() => finish(reg.active ? reg : null), timeoutMs)
+  })
+}
+
+/**
  * Lấy ServiceWorkerRegistration đang hoạt động, có timeout.
  *
  * `navigator.serviceWorker.ready` có thể KHÔNG BAO GIỜ resolve nếu đăng ký
@@ -299,7 +350,7 @@ async function getActiveRegistration(timeoutMs = 8000) {
         swRegistrationPromise,
         new Promise((resolve) => setTimeout(() => resolve(undefined), 1500)),
       ])
-      if (warm) return warm
+      if (warm?.active) return warm
     } catch {
       /* bỏ qua */
     }
@@ -309,16 +360,27 @@ async function getActiveRegistration(timeoutMs = 8000) {
   try {
     const existing = await navigator.serviceWorker.getRegistration()
     if (existing?.active) return existing
+    if (existing) {
+      const waited = await waitForActiveWorker(existing, timeoutMs)
+      if (waited) return waited
+    }
   } catch {
     /* bỏ qua */
   }
 
-  // Chờ `ready` nhưng có timeout.
+  // Chờ `ready` nhưng có timeout. `ready` chỉ resolve khi có worker active.
   try {
-    return await Promise.race([
+    const ready = await Promise.race([
       navigator.serviceWorker.ready,
       new Promise((resolve) => setTimeout(() => resolve(null), timeoutMs)),
     ])
+    if (!ready) return null
+    // Chắc chắn worker đã active trước khi trả về.
+    if (!ready.active) {
+      const waited = await waitForActiveWorker(ready, timeoutMs)
+      return waited || null
+    }
+    return ready
   } catch {
     return null
   }
@@ -432,28 +494,41 @@ export async function subscribeToPush(opts = {}) {
     setLastPushError('')
     return { ok: true, subscription: existing.toJSON() }
   } catch (e) {
-    // `InvalidStateError` khi subscription cũ dùng VAPID key khác -> thử
-    // huỷ rồi đăng ký lại 1 lần. (Với key cũ KHÔNG lưu trong localStorage
-    // thì không phát hiện được, nên dùng cách này làm lưới an toàn.)
+    // `InvalidStateError` xảy ra khi worker CHƯA ACTIVE, hoặc subscription cũ
+    // dùng VAPID key khác. Xử lý cả hai: chờ worker active -> huỷ subscription
+    // cũ (nếu có) -> subscribe lại.
     if (e?.name === 'InvalidStateError') {
+      const detail = explainPushError(e)
+      console.warn('[push] InvalidStateError -> ' + detail)
       try {
         const reg = await getActiveRegistration()
-        const stale = reg ? await reg.pushManager.getSubscription() : null
-        if (stale) {
-          console.warn('[push] subscribe() bị InvalidStateError -> huỷ subscription cũ và thử lại.')
-          await stale.unsubscribe()
-          const fresh = await reg.pushManager.subscribe({
-            userVisibleOnly: true,
-            applicationServerKey: urlBase64ToUint8Array(vapidKey),
-          })
-          rememberVapidKey(vapidKey)
-          setLastPushError('')
-          return { ok: true, subscription: fresh.toJSON() }
+        if (!reg) {
+          setLastPushError(
+            `${detail}\n\nService Worker chưa kích hoạt. Hãy đóng app hẳn rồi mở lại từ icon màn hình chính (không mở trong tab Safari), rồi bấm "Đăng ký push" lần nữa.`,
+          )
+          return { ok: false, reason: 'subscribe-failed', error: getLastPushError() }
         }
+
+        // Huỷ mọi subscription cũ (kể cả khi không lưu VAPID key) để chắc
+        // chắn không còn subscription "mồ côi" gây InvalidStateError.
+        const stale = await reg.pushManager.getSubscription()
+        if (stale) {
+          await stale.unsubscribe()
+        }
+
+        const fresh = await reg.pushManager.subscribe({
+          userVisibleOnly: true,
+          applicationServerKey: urlBase64ToUint8Array(vapidKey),
+        })
+        rememberVapidKey(vapidKey)
+        setLastPushError('')
+        return { ok: true, subscription: fresh.toJSON() }
       } catch (e2) {
-        const detail = explainPushError(e2)
-        setLastPushError(detail)
-        return { ok: false, reason: 'subscribe-failed', error: detail }
+        const detail2 = explainPushError(e2)
+        setLastPushError(
+          `${detail2}\n\nGợi ý: đóng app hẳn, mở lại từ icon màn hình chính, rồi bấm "Đăng ký push". Nếu vẫn lỗi, dùng nút "Đặt lại push" rồi thử lại.`,
+        )
+        return { ok: false, reason: 'subscribe-failed', error: getLastPushError() }
       }
     }
 
@@ -670,6 +745,7 @@ export async function getPushDiagnostics() {
     swSupported: false,
     swScope: '',
     swController: false,
+    swState: '',
     pushSupported: false,
     permission: 'unknown',
     vapidKey: false,
@@ -694,6 +770,9 @@ export async function getPushDiagnostics() {
       try {
         const reg = await getActiveRegistration()
         d.swScope = reg?.scope || ''
+        // Trạng thái worker: 'active' | 'installing' | 'waiting' | 'redundant'
+        d.swState =
+          reg?.active?.state || reg?.waiting?.state || reg?.installing?.state || 'none'
         if (!reg) d.error = 'Service Worker chưa kịp kích hoạt (chưa có registration active).'
         const sub = reg ? await reg.pushManager.getSubscription() : null
         if (sub) {

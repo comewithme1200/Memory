@@ -30,12 +30,18 @@
 const SW_VERSION = 'v1'
 
 self.addEventListener('install', (event) => {
-  self.skipWaiting()
-  event.waitUntil(self.clients.claim())
+  // `skipWaiting()` để bản SW mới có hiệu lực ngay.
+  //
+  // KHÔNG gọi `self.clients.claim()` ở đây! Theo spec, `Clients.claim()`
+  // chỉ hợp lệ khi service worker đang ở trạng thái `activating`/`activated`.
+  // Gọi ở pha `install` sẽ ném `InvalidStateError` -> `install` thất bại ->
+  // worker KHÔNG BAO GIỜ active -> `pushManager.subscribe()` cũng ném
+  // `InvalidStateError` ("Subscribing for push requires an active service worker").
+  event.waitUntil(self.skipWaiting())
 })
 
 self.addEventListener('activate', (event) => {
-  // Xoá cache cũ nếu sau này có thêm cache.
+  // Xoá cache cũ nếu sau này có thêm cache, và tiếp quản các client đang mở.
   event.waitUntil(
     (async () => {
       const names = await caches.keys()

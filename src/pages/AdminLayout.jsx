@@ -289,7 +289,8 @@ export default function AdminLayout() {
     const lines = [
       `App từ màn hình chính: ${d.standalone ? 'CÓ' : 'KHÔNG'}`,
       `iOS: ${d.ios ? 'CÓ' : 'không'}`,
-      `Service Worker: ${d.swSupported ? 'có' : 'không'} | scope: ${d.swScope || '-'}`,
+      `Service Worker: ${d.swSupported ? 'có' : 'không'} | scope: ${d.swScope || '-'} | worker: ${d.swState || '-'}`,
+      `Trang đang được SW kiểm soát: ${d.swController ? 'CÓ' : 'CHƯA'}`,
       `Quyền thông báo: ${d.permission}`,
       `Web Push hỗ trợ: ${d.pushSupported ? 'có' : 'KHÔNG'}`,
       `VAPID key: ${d.vapidKey ? 'có' : 'THIẾU'}`,
@@ -403,6 +404,7 @@ export default function AdminLayout() {
             <li>
               Service Worker: <strong>{diag.swSupported ? 'có' : 'KHÔNG'}</strong>
               {diag.swScope ? ` (scope: ${diag.swScope})` : ''}
+              {diag.swState ? ` | worker: ${diag.swState}` : ''}
               {diag.swController ? '' : ' ← chưa có controller, thử đóng/mở lại app'}
             </li>
             <li>
