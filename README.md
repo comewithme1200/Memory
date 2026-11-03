@@ -85,6 +85,7 @@ Mở trình duyệt tại: **http://localhost:5173**
 | `npm run check:options` | Kiểm tra phần **tuỳ chọn món** (bảng `options`, `menu_item_options`) |
 | `npm run check:push` | Kiểm tra phần **Web Push** (bảng `push_subscriptions`, RPC, RLS) |
 | `npm run apply:push` | Tự tạo 2 RPC cho Web Push qua Supabase Management API (cần `supabase login`) |
+| `npm run setup:push` | **Setup Web Push trọn vẹn**: deploy Edge Functions + secrets + RPC + trigger (cần `supabase login`) |
 | `npm run gen:icons` | Sinh lại icon PWA (PNG cho iOS/Android) trong `public/` |
 | `npm run gen:vapid` | Sinh cặp khoá VAPID cho Web Push |
 | `npm run test:item-price` | Kiểm tra giá món đã cộng `price_delta` của tuỳ chọn chưa |
@@ -405,6 +406,31 @@ quản trị. Chỉ chuyển **1 lần mỗi phiên** (cờ trong `sessionStorag
 > Đây là phần **server-side**. Bỏ qua bước này thì app vẫn kêu khi đang mở,
 > nhưng **không** kêu được khi điện thoại khoá màn hình.
 
+#### 🚀 CÁCH NHANH NHẤT — 1 lệnh là xong
+
+```bash
+npx supabase login      # đăng nhập (mở trình duyệt, xong quay lại terminal)
+npm run setup:push      # làm tất cả phần còn lại
+```
+
+`npm run setup:push` sẽ tự động:
+
+1. Deploy Edge Function `register-push` + `send-push`
+2. Đặt secrets `VAPID_PUBLIC_KEY`, `VAPID_PRIVATE_KEY`, `APP_URL`
+3. Tạo 2 RPC cho bảng `push_subscriptions`
+4. Cất `service_role` key vào **Supabase Vault** (mã hoá, không lộ trong
+   `pg_dump`) và tạo trigger `trg_push_new_order` trên bảng `orders` để gọi
+   `send-push` mỗi khi có đơn mới
+
+Sau đó trên điện thoại: mở lại app → bấm **🔔 Bật thông báo** → **Cho phép**
+→ bấm **📲 Đồng bộ push** → tắt màn hình thử.
+
+> Nếu script báo chưa đăng nhập, chạy `npx supabase login` trước (lệnh này mở
+> trình duyệt để bạn đăng nhập bằng tài khoản Supabase).
+
+<details>
+<summary>🛠️ Cách làm THỦ CÔNG từng bước (nếu muốn tự làm)</summary>
+
 **Bước 1 — Sinh cặp khoá VAPID**
 
 ```bash
@@ -471,11 +497,38 @@ Supabase Dashboard → **Edge Functions** → `send-push` → **Secrets** → th
 |---|---|
 | `VAPID_PUBLIC_KEY` | giống `VITE_VAPID_PUBLIC_KEY` |
 | `VAPID_PRIVATE_KEY` | giá trị private ở Bước 1 |
+| `APP_URL` | URL web app, VD `https://yourname.github.io/yourrepo/` |
 
 > `SUPABASE_URL`, `SUPABASE_ANON_KEY`, `SUPABASE_SERVICE_ROLE_KEY` do Supabase
 > tự cấp sẵn — không cần thêm.
 
 **Bước 5 — Nối tự động khi có đơn mới**
+
+Cách nhanh — dùng Vault (khuyến nghị, key không lộ trong `pg_dump`):
+
+```sql
+select vault.create_secret('YOUR_SUPABASE_SERVICE_ROLE_KEY', 'push_service_key');
+
+create or replace function public.push_notify_new_order()
+returns trigger language plpgsql security definer set search_path = '' as $$
+declare v_key text;
+begin
+  select decrypted_secret into v_key from vault.decrypted_secrets where name = 'push_service_key';
+  perform net.http_post(
+    url := 'https://<project-ref>.supabase.co/functions/v1/send-push',
+    headers := jsonb_build_object('Content-Type','application/json','apikey',v_key,'Authorization','Bearer ' || v_key),
+    body := jsonb_build_object('type', tg_op, 'table', tg_table_name, 'schema', tg_table_schema, 'record', to_jsonb(new), 'old_record', null),
+    timeout_milliseconds := 5000
+  );
+  return new;
+end;
+$$;
+
+create trigger trg_push_new_order after insert on public.orders
+for each row execute function public.push_notify_new_order();
+```
+
+Cách thay thế — giao diện Dashboard:
 
 Supabase Dashboard → **Database** → **Webhooks** → **Create Webhook**:
 
@@ -487,10 +540,12 @@ Supabase Dashboard → **Database** → **Webhooks** → **Create Webhook**:
 | Function | `send-push` |
 | Header | `Authorization: Bearer <SUPABASE_SERVICE_ROLE_KEY>` |
 
+</details>
+
 **Bước 6 — Bật trên điện thoại**
 
-Mở app (đã cài từ màn hình chính) → bấm **🔔 Bật thông báo** → **Cho phép**.
-Thanh công cụ sẽ hiện **📲 Push: BẬT**.
+Mở app (đã cài từ màn hình chính) → bấm **🔔 Bật thông báo** → **Cho phép**
+→ bấm **📲 Đồng bộ push** → thanh công cụ sẽ hiện **📲 Push: BẬT**.
 
 **Kiểm tra:**
 
@@ -498,7 +553,22 @@ Thanh công cụ sẽ hiện **📲 Push: BẬT**.
 select count(*) as thiet_bi from public.push_subscriptions;
 ```
 
-> = 1 sau khi bật trên điện thoại -> OK.
+> = 1 sau khi bấm "Đồng bộ push" -> OK.
+
+#### ❓ "Tôi bật hết rồi mà sao tắt màn hình vẫn im lặng?"
+
+| Nguyên nhân | Cách kiểm tra | Cách sửa |
+|---|---|---|
+| **Edge Function chưa deploy** | `npm run check:push` hoặc mở `https://<ref>.supabase.co/functions/v1/send-push` → 404 | `npm run setup:push` |
+| **Server chưa có subscription** | `select count(*) from public.push_subscriptions;` → 0 | Bấm **📲 Đồng bộ push** trên app |
+| **Chưa có trigger gọi `send-push`** | Đơn mới mà không có gì cả | `npm run setup:push` (tạo trigger) |
+| iOS đang bật **Không làm phiền** | Cài đặt → Quán Ăn Sáng → Thông báo | Tắt Focus |
+| App mở trong tab Safari, không phải từ icon | Thanh công cụ có hiện "📱 Đã cài app"? | Mở từ icon màn hình chính |
+
+> 💡 **Mẹo:** app tự đồng bộ subscription lên server mỗi lần mở (`ensurePushSynced`),
+> nên sau khi deploy function xong chỉ cần **đóng app mở lại** là có push —
+> không cần gỡ/cài lại. Nếu vẫn chưa, bấm **📲 Đồng bộ push**.
+
 
 #### Tham chiếu kỹ thuật
 
@@ -769,6 +839,7 @@ Bấm **"🖨️ In lại"** ở đơn đã hoàn thành để in lại.
 │   ├── check-options-schema.mjs # Kiểm tra phần tuỳ chọn (npm run check:options)
 │   ├── check-push-schema.mjs   # Kiểm tra phần Web Push (npm run check:push)
 │   ├── apply-push-rpcs.mjs    # Tạo RPC Web Push qua Management API (npm run apply:push)
+│   ├── setup-push.mjs         # Setup Web Push trọn vẹn (npm run setup:push)
 │   ├── generate-icons.mjs      # Sinh icon PWA PNG (npm run gen:icons)
 │   ├── generate-vapid-keys.mjs # Sinh khoá VAPID cho Web Push (npm run gen:vapid)
 │   ├── test-item-price.mjs    # Kiểm tra giá đã cộng price_delta (npm run test:item-price)

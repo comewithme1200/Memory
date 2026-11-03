@@ -17,6 +17,7 @@
     "check:expire": "node scripts/check-expire-orders.mjs",
     "check:push": "node scripts/check-push-schema.mjs",
     "apply:push": "node scripts/apply-push-rpcs.mjs",
+    "setup:push": "node scripts/setup-push.mjs",
     "test:price": "node scripts/test-order-price.mjs",
     "test:item-price": "node scripts/test-item-price.mjs",
     "test:payment": "node scripts/test-payment.mjs",

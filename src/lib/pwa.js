@@ -267,6 +267,91 @@ export async function registerPushWithServer(subscription) {
     return false
   }
 }
+
+/* ------------------------------------------------------------------ *
+ * 3b. TỰ ĐỒNG BỘ SUBSCRIPTION LÊN SERVER (quan trọng)
+ * ------------------------------------------------------------------ */
+
+/**
+ * Cờ đánh dấu "đã gửi subscription này lên server thành công".
+ *
+ * Lưu theo endpoint -> nếu endpoint đổi (gỡ app rồi cài lại, đổi VAPID
+ * key...) thì coi như chưa từng gửi -> gửi lại.
+ */
+const SYNCED_KEY = 'quan-an-sang:push-synced'
+
+function getSyncedEndpoints() {
+  try {
+    const raw = localStorage.getItem(SYNCED_KEY)
+    const arr = raw ? JSON.parse(raw) : []
+    return Array.isArray(arr) ? arr : []
+  } catch {
+    return []
+  }
+}
+
+function markSynced(endpoint) {
+  try {
+    const list = getSyncedEndpoints()
+    if (!list.includes(endpoint)) {
+      list.push(endpoint)
+      // Giới hạn 20 mục cho khỏi phình to.
+      localStorage.setItem(SYNCED_KEY, JSON.stringify(list.slice(-20)))
+    }
+  } catch {
+    /* bỏ qua */
+  }
+}
+
+function isSynced(endpoint) {
+  return getSyncedEndpoints().includes(endpoint)
+}
+
+/**
+ * Đảm bảo server ĐÃ CÓ subscription của thiết bị này.
+ *
+ * ---------------------------------------------------------------------------
+ * VÌ SAO CẦN HÀM NÀY?
+ *
+ * Subscription là thứ nằm trong browser. Server chỉ gửi push được nếu đã
+ * lưu subscription đó trong DB. Nếu lúc bạn bấm "🔔 Bật thông báo" mà Edge
+ * Function `register-push` CHƯA được deploy (404) thì:
+ *
+ *   - subscription VẪN được tạo trong browser (nên app hiện "📲 Push: BẬT")
+ *   - nhưng SERVER KHÔNG CÓ gì để gửi -> màn hình tắt là im lặng.
+ *
+ * Hàm này chạy mỗi lần mở app: thấy subscription chưa được sync -> gửi lại
+ * lên server. Nhờ vậy chỉ cần deploy function là tự động có push, không
+ * cần thao tác lại trên điện thoại.
+ *
+ * @returns {Promise<boolean>} true nếu server đã có subscription
+ */
+export async function ensurePushSynced() {
+  if (typeof window === 'undefined') return false
+  if (!('serviceWorker' in navigator)) return false
+  if (!navigator.serviceWorker.controller && !navigator.serviceWorker.ready) return false
+
+  try {
+    const reg = await navigator.serviceWorker.ready
+    if (!reg) return false
+
+    const sub = await reg.pushManager.getSubscription()
+    if (!sub) return false
+
+    const json = sub.toJSON()
+    if (!json?.endpoint) return false
+
+    // Đã sync rồi -> khỏi gọi mạng.
+    if (isSynced(json.endpoint)) return true
+
+    const saved = await registerPushWithServer(json)
+    if (saved) markSynced(json.endpoint)
+    return saved
+  } catch (e) {
+    console.warn('Không đồng bộ push subscription:', e)
+    return false
+  }
+}
 /**
  * Huỷ đăng ký push (khi chủ quán không muốn nhận nữa).
  */

@@ -20,6 +20,7 @@ import {
   registerPushWithServer,
   getPushSubscription,
   getVapidPublicKey,
+  ensurePushSynced,
 } from '../lib/pwa.js'
 
 export default function AdminLayout() {
@@ -91,13 +92,32 @@ export default function AdminLayout() {
   }, [])
 
   // Kiểm tra đã đăng ký Web Push chưa.
+  //
+  // QUAN TRỌNG: không chỉ kiểm tra "browser có subscription" mà còn phải
+  // ĐỒNG BỘ subscription lên server. Nếu lúc bấm "🔔 Bật thông báo" Edge
+  // Function `register-push` chưa deploy (404) thì server không có gì để
+  // gửi -> màn hình tắt là im lặng. `ensurePushSynced` tự gửi lại nếu thiếu.
   useEffect(() => {
     let alive = true
-    getPushSubscription().then((sub) => {
-      if (alive) setPushed(Boolean(sub))
-    })
+
+    const check = async () => {
+      const sub = await getPushSubscription()
+      if (!alive) return
+      setPushed(Boolean(sub))
+
+      if (sub) {
+        const synced = await ensurePushSynced()
+        if (alive) setPushed(Boolean(sub) && synced)
+      }
+    }
+
+    check()
+    // Thử lại sau 5s — phòng trường hợp vừa mới deploy function xong.
+    const t = setTimeout(check, 5000)
+
     return () => {
       alive = false
+      clearTimeout(t)
     }
   }, [])
 
@@ -156,7 +176,7 @@ export default function AdminLayout() {
           setToast(
             saved
               ? '🔔 Đã bật thông báo + đăng ký push kể cả khi app đóng.'
-              : '🔔 Đã bật thông báo (chưa lưu được push lên server).',
+              : '⚠️ Đã bật thông báo, nhưng CHƯA lưu được push lên server (server chưa có function). Bấm "📲 Đồng bộ push" sau khi deploy xong.',
           )
         } else {
           setToast('🔔 Đã bật thông báo (chưa đăng ký push khi app đóng).')
@@ -175,6 +195,28 @@ export default function AdminLayout() {
       setToast('💡 Bấm "🔔 Bật thông báo" để nhận báo đơn mới khi đang lướt web.')
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
+  /**
+   * Đồng bộ subscription lên server (thủ công).
+   *
+   * Dùng khi: vừa deploy Edge Function `register-push` xong mà app vẫn báo
+   * chưa đồng bộ — bấm 1 phát là xong, không cần gỡ/cài lại app.
+   */
+  const resyncPush = useCallback(async () => {
+    setToast('⏳ Đang đồng bộ push lên server...')
+    const sub = await getPushSubscription()
+    if (!sub) {
+      setToast('⚠️ Chưa có subscription trên thiết bị này. Bấm "🔔 Bật thông báo" trước.')
+      return
+    }
+    const saved = await registerPushWithServer(sub)
+    setPushed(saved)
+    setToast(
+      saved
+        ? '✅ Đã đồng bộ push lên server. Tắt màn hình thử lại nhé!'
+        : '❌ Đồng bộ thất bại — server chưa có Edge Function `register-push`.',
+    )
   }, [])
 
   const installHint = getInstallHint()
@@ -224,6 +266,14 @@ export default function AdminLayout() {
             📲 Push: BẬT
           </span>
         )}
+
+        <button
+          className="btn btn-alert"
+          onClick={resyncPush}
+          title="Gửi lại subscription lên server (dùng sau khi deploy Edge Function)"
+        >
+          📲 Đồng bộ push
+        </button>
 
         {standalone && (
           <span className="alert-bar-ok" title="Đang chạy từ màn hình chính">
