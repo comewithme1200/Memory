@@ -26,6 +26,8 @@
     "seed:options": "node scripts/seed-options.mjs",
     "gen:icons": "node scripts/generate-icons.mjs",
     "gen:vapid": "node scripts/generate-vapid-keys.mjs",
+    "check:vapid": "node scripts/check-vapid-keys.mjs",
+    "test:push": "node scripts/test-push-send.mjs",
     "test:local": "node scripts/test-customers-local.mjs",
     "verify:migration": "node scripts/verify-migration.mjs",
     "deploy": "npm run build:clean && npm run check:env && gh-pages -d dist"

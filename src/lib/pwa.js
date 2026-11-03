@@ -669,6 +669,19 @@ export async function ensurePushSynced() {
 
     let sub = await reg.pushManager.getSubscription()
 
+    // Subscription còn tồn tại nhưng được tạo bằng VAPID key CŨ (đã xoay
+    // khoá) -> server sẽ ký JWT sai -> Apple trả `VapidPkHashMismatch`.
+    // Phải huỷ rồi đăng ký lại với khoá hiện tại.
+    if (sub && !subscriptionMatchesVapid(sub, getVapidPublicKey())) {
+      console.warn('[push] Subscription dùng VAPID key cũ -> huỷ và đăng ký lại.')
+      try {
+        await sub.unsubscribe()
+      } catch {
+        /* bỏ qua */
+      }
+      sub = null
+    }
+
     // Chưa có subscription -> thử tự tạo (chỉ thành công nếu permission
     // đã granted; nếu chưa thì WebKit từ chối -> bỏ qua, chờ người dùng
     // bấm nút "🔔 Bật thông báo").

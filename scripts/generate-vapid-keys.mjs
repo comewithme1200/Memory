@@ -54,7 +54,6 @@ async function generateVapidKeys() {
   // PushManager yêu cầu. Xuất ra dạng "spki" rồi bỏ header 26 byte.
   const publicKey = await crypto.subtle.exportKey('spki', keyPair.publicKey)
   const rawPublic = Buffer.from(publicKey).subarray(26)
-
   // Private key: RAW 32 byte (đại lượng EC).
   //
   // ⚠️  PHẢI là 32 byte THÔ, KHÔNG phải PKCS#8/DER.
@@ -62,9 +61,15 @@ async function generateVapidKeys() {
   //     và sẽ báo lỗi nếu không:
   //         "Vapid private key should be 32 bytes long when decoded."
   //
-  //     Xuất PKCS#8 (48 byte) rồi lấy 32 byte CUỐI (chính là đại lượng EC).
-  const pkcs8 = await crypto.subtle.exportKey('pkcs8', keyPair.privateKey)
-  const rawPrivate = Buffer.from(pkcs8).subarray(-32)
+  // ⚠️  KHÔNG DÙNG `pkcs8.subarray(-32)`!
+  //     PKCS#8 của P-256 dài 138 byte; 32 byte CUỐI là **toạ độ Y của public
+  //     key** (phần public key được nhúng trong private), KHÔNG phải private
+  //     scalar. Dùng cách đó -> cặp khoá public/private không khớp -> server
+  //     ký JWT sai -> Apple trả `403 BadJwtToken`.
+  //
+  //     Cách ĐÚNG: export dạng JWK -> `d` chính là private scalar 32 byte.
+  const jwk = await crypto.subtle.exportKey('jwk', keyPair.privateKey)
+  const rawPrivate = Buffer.from(jwk.d, 'base64url')
 
   return {
     publicKey: base64url(rawPublic),

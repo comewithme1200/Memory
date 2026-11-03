@@ -275,6 +275,9 @@ step('Đặt secrets (VAPID keys) cho Edge Function')
       { name: 'VAPID_PUBLIC_KEY', value: vapidPublic },
       { name: 'VAPID_PRIVATE_KEY', value: vapidPrivate },
       { name: 'APP_URL', value: APP_URL },
+      // `sub` của JWT VAPID: phải là URL https: hợp lệ (Apple trả
+      // 403 BadJwtToken nếu subject là localhost hoặc domain không thật).
+      { name: 'VAPID_SUBJECT', value: APP_URL },
     ]),
   })
   if (!res.ok) {

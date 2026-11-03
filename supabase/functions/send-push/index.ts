@@ -108,7 +108,12 @@ Deno.serve(async (req) => {
       )
     }
 
-    webpush.setVapidDetails('mailto:admin@quanasang.local', vapidPublicKey, vapidPrivateKey)
+    // `sub` trong JWT VAPID PHẢI là URL https: hoặc mailto: hợp lệ.
+    // Apple cảnh báo subject kiểu `localhost` / domain không thật sẽ gây
+    // `403 BadJwtToken` -> dùng chính URL của web app (luôn hợp lệ).
+    const vapidSubject = Deno.env.get('VAPID_SUBJECT') || `${appUrl}`
+
+    webpush.setVapidDetails(vapidSubject, vapidPublicKey, vapidPrivateKey)
 
     // --- Đọc đơn hàng cần báo ---
     let order = null
@@ -173,11 +178,25 @@ Deno.serve(async (req) => {
         } catch (e) {
           failed++
           const status = e?.statusCode
+          const apnsId = e?.headers?.['apns-id'] || ''
+
+          // Apple trả body JSON: { "reason": "BadJwtToken" | "VapidPkHashMismatch" | ... }
+          let reason = ''
+          try {
+            reason = JSON.parse(e?.body || '{}')?.reason || ''
+          } catch {
+            reason = String(e?.body || '').slice(0, 120)
+          }
+
           // 404/410 -> thiết bị đã gỡ app / token hết hạn -> xoá subscription.
-          if (status === 404 || status === 410) {
+          // 403 + VapidPkHashMismatch -> subscription được tạo bằng VAPID key CŨ
+          //   (đã xoay khoá) -> cũng phải xoá, nếu không sẽ gửi hỏng mãi.
+          if (status === 404 || status === 410 || reason === 'VapidPkHashMismatch') {
             staleIds.push(s.id)
           }
-          console.error(`✗ Gửi push thất bại (${status || '?'}): ${e?.message}`)
+          console.error(
+            `✗ Gửi push thất bại (${status || '?'}${reason ? ' ' + reason : ''}) apns-id=${apnsId}: ${e?.message}`,
+          )
         }
       }),
     )
@@ -189,8 +208,7 @@ Deno.serve(async (req) => {
     }
 
     console.log(`✓ Đã gửi ${sent}/${subs.length} thông báo đơn mới.`)
-    return json({ ok: true, sent, failed, total: subs.length })
-  } catch (e) {
+    return json({ ok: true, sent, failed, total: subs.length })  } catch (e) {
     console.error('send-push lỗi:', e)
     return json({ error: e?.message || 'Lỗi không xác định.' }, 500)
   }
