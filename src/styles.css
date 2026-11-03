@@ -142,6 +142,20 @@ a {
   margin-bottom: 14px;
 }
 
+/* Panel có tiêu đề + nút hành động cạnh nhau (vd "Thực đơn" + "➕ Thêm món") */
+.panel-head-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin-bottom: 14px;
+}
+
+.panel-title-mb0 {
+  margin-bottom: 0;
+}
+
 /* ------------------------------ BUTTONS ----------------------------- */
 
 .btn {
@@ -633,6 +647,131 @@ a {
 
 .opt-choice-row .btn-row {
   margin-left: auto;
+}
+
+/* ------------------ TRANG TUỲ CHỌN (mới) ------------------ */
+
+/* Danh sách nhóm tuỳ chọn — mỗi nhóm 1 thẻ */
+.opt-groups {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.opt-group-card {
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  padding: 14px 16px;
+  background: #fff;
+}
+
+.opt-group-card-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin-bottom: 6px;
+}
+
+.opt-group-card-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.opt-group-name-lg {
+  font-size: 16px;
+  font-weight: 800;
+  color: var(--ink);
+}
+
+/* Tên món trong nhóm tuỳ chọn — nổi bật hơn tên lựa chọn */
+.opt-dish-name {
+  font-size: 14.5px;
+  font-weight: 800;
+  color: var(--ink);
+}
+
+/* Lựa chọn xếp dọc (mỗi lựa chọn 1 dòng) thay vì xếp chip ngang */
+.opt-choices-rows {
+  flex-direction: column;
+  align-items: stretch;
+  gap: 0;
+}
+
+/* ---- Khối gán cho món ăn (trong modal) ---- */
+
+.assign-block {
+  margin-top: 16px;
+  padding-top: 14px;
+  border-top: 1px dashed var(--line);
+}
+
+.assign-block-tight {
+  margin-top: 14px;
+}
+
+.assign-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 10px;
+}
+
+.assign-required {
+  margin-top: 12px;
+  font-size: 13.5px;
+}
+
+/* Danh sách món dạng ô tick */
+.dish-picker {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(190px, 1fr));
+  gap: 8px;
+  max-height: 240px;
+  overflow-y: auto;
+  padding: 2px;
+}
+
+.dish-pick {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  padding: 8px 10px;
+  font-size: 13.5px;
+  cursor: pointer;
+  background: #fff;
+  transition: border-color 0.15s ease, background 0.15s ease;
+}
+
+.dish-pick:hover {
+  border-color: var(--brand);
+}
+
+.dish-pick input {
+  width: 16px;
+  height: 16px;
+  accent-color: var(--brand);
+  cursor: pointer;
+  flex: none;
+}
+
+.dish-pick-on {
+  border-color: var(--brand);
+  background: var(--brand-soft);
+}
+
+.dish-pick-name {
+  font-weight: 600;
+  color: var(--ink);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .panel-hint {
@@ -1575,6 +1714,56 @@ a {
   word-break: break-word;
 }
 
+/* ---- THÔNG TIN KHÁCH (tên + SĐT) — nổi bật, dễ đọc ----
+   Tên và số điện thoại là thứ cần đọc đầu tiên khi chuẩn bị giao hàng.
+   Tách khỏi dòng giờ (muted small) và làm nổi bật bằng cỡ chữ + đậm. */
+.order-customer {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin: 6px 0 4px;
+}
+
+.order-customer-name {
+  font-size: 17px;
+  font-weight: 800;
+  color: var(--ink);
+  line-height: 1.25;
+  letter-spacing: -0.01em;
+}
+
+.order-customer-phone {
+  font-size: 15px;
+  font-weight: 700;
+  color: var(--brand-dark);
+  background: var(--brand-soft);
+  border: 1px solid transparent;
+  border-radius: 8px;
+  padding: 3px 10px;
+  text-decoration: none;
+  line-height: 1.3;
+  white-space: nowrap;
+}
+
+.order-customer-phone:hover {
+  border-color: var(--brand);
+  text-decoration: underline;
+}
+
+/* Trên điện thoại: tên + SĐT xếp dọc cho dễ đọc hơn */
+@media (max-width: 480px) {
+  .order-customer {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 6px;
+  }
+
+  .order-customer-name {
+    font-size: 16.5px;
+  }
+}
+
 .order-actions {
   display: flex;
   gap: 8px;
@@ -1864,6 +2053,213 @@ a {
   animation: flash-pulse 1.2s ease-in-out 3;
 }
 
+/* ------------------------------------------------------------------ *
+ * THANH CÔNG CỤ ÂM BÁO ĐƠN MỚI
+ * ------------------------------------------------------------------ */
+.alert-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 16px;
+  background: #fff8e6;
+  border-bottom: 1px solid #f0e0b8;
+}
+
+.btn-alert {
+  border: 1px solid #e0c98a;
+  background: #fff;
+  color: #7a5b12;
+  font-weight: 700;
+  font-size: 13px;
+  padding: 6px 12px;
+  border-radius: 999px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.btn-alert:hover {
+  background: #fff3d1;
+}
+
+.btn-alert-on {
+  background: #dcfce7;
+  border-color: #7ee2a8;
+  color: #15803d;
+}
+
+.btn-alert-cta {
+  background: #2563eb;
+  border-color: #1d4ed8;
+  color: #fff;
+}
+
+.btn-alert-cta:hover {
+  background: #1d4ed8;
+}
+
+.alert-bar-ok {
+  font-size: 13px;
+  font-weight: 700;
+  color: #15803d;
+  white-space: nowrap;
+}
+
+.alert-bar-tip {
+  font-size: 12px;
+  color: #8a7327;
+}
+
+.alert-toast {
+  margin: 10px 16px 0;
+  animation: flash-pulse 1.2s ease-in-out 2;
+}
+
+/* ------------------------------------------------------------------ *
+ * HƯỚNG DẪN CÀI APP (iPhone — Add to Home Screen)
+ * ------------------------------------------------------------------ */
+.install-hint {
+  margin: 10px 16px 0;
+  padding: 14px 16px;
+  border-radius: 14px;
+  background: #eef4ff;
+  border: 1px solid #b9cdf8;
+  color: #1e3a8a;
+}
+
+.install-hint-title {
+  font-weight: 800;
+  font-size: 15px;
+  margin-bottom: 4px;
+}
+
+.install-hint-text {
+  font-size: 13px;
+  line-height: 1.5;
+  color: #334155;
+}
+
+.install-hint-steps {
+  margin: 10px 0 0;
+  padding-left: 20px;
+  font-size: 13px;
+  line-height: 1.7;
+  color: #1e293b;
+}
+
+.install-hint-steps li {
+  margin-bottom: 2px;
+}
+
+@media (max-width: 560px) {
+  .install-hint {
+    margin: 8px 12px 0;
+    padding: 12px 13px;
+  }
+}
+
+/* ------------------------------------------------------------------ *
+ * BANNER ĐƠN MỚI (nổi bật kèm âm thanh)
+ * ------------------------------------------------------------------ */
+.new-order-banner {
+  margin: 10px 16px 0;
+  padding: 12px 14px;
+  border-radius: 14px;
+  background: linear-gradient(135deg, #dcfce7, #bbf7d0);
+  border: 2px solid #22c55e;
+  box-shadow: 0 6px 20px rgba(34, 197, 94, 0.25);
+  animation: new-order-pop 0.45s ease-out;
+}
+
+.new-order-banner-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.new-order-banner-title {
+  font-size: 16px;
+  font-weight: 800;
+  color: #15803d;
+}
+
+.new-order-banner-list {
+  list-style: none;
+  margin: 8px 0 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.new-order-banner-list li {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 8px;
+  font-size: 15px;
+  color: #14532d;
+}
+
+.new-order-banner-phone {
+  font-weight: 700;
+  color: #166534;
+}
+
+.new-order-banner-code {
+  font-size: 13px;
+  font-weight: 700;
+  color: #15803d;
+  background: rgba(255, 255, 255, 0.7);
+  border-radius: 999px;
+  padding: 1px 8px;
+}
+
+.new-order-banner-total {
+  margin-left: auto;
+  font-weight: 800;
+  color: #166534;
+}
+
+@keyframes new-order-pop {
+  0% {
+    transform: translateY(-10px) scale(0.97);
+    opacity: 0;
+  }
+  60% {
+    transform: translateY(0) scale(1.02);
+    opacity: 1;
+  }
+  100% {
+    transform: scale(1);
+    opacity: 1;
+  }
+}
+
+@media (max-width: 560px) {
+  .alert-bar {
+    padding: 8px 12px;
+  }
+  .alert-bar-tip {
+    display: none;
+  }
+  .new-order-banner {
+    margin: 8px 12px 0;
+    padding: 10px 12px;
+  }
+  .new-order-banner-title {
+    font-size: 15px;
+  }
+  .new-order-banner-list li {
+    font-size: 14px;
+  }
+  .new-order-banner-total {
+    margin-left: 0;
+    width: 100%;
+  }
+}
+
 @keyframes flash-pulse {
   0%,
   100% {
@@ -1886,6 +2282,12 @@ a {
   margin: 0 0 14px;
   font-size: 13.5px;
   color: var(--ink-2);
+}
+
+.page-sub-muted {
+  color: var(--muted);
+  font-size: 12.5px;
+  margin-bottom: 12px;
 }
 
 /* ------------------------------ LOGIN ------------------------------ */

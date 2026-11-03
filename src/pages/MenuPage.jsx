@@ -8,9 +8,13 @@ export default function MenuPage() {
   const [items, setItems] = useState([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
-  const [form, setForm] = useState(EMPTY)
-  const [editingId, setEditingId] = useState(null)
-  const [busy, setBusy] = useState(false)
+
+  // ---- MODAL THÊM / SỬA MÓN ------------------------------------------
+  // `modal` = null (đang đóng) | { mode: 'add' } | { mode: 'edit', item }
+  //
+  // Trang này chỉ có 2 việc: XEM danh sách món và THÊM món. Mọi thao tác
+  // sửa/xoá vẫn làm trực tiếp trên bảng, không cần modal.
+  const [modal, setModal] = useState(null)
 
   const reload = () =>
     listMenu()
@@ -21,46 +25,6 @@ export default function MenuPage() {
   useEffect(() => {
     reload()
   }, [])
-
-  const submit = async (e) => {
-    e.preventDefault()
-    if (!form.name.trim()) return setError('Tên món không được để trống.')
-    if (!form.price || Number(form.price) <= 0) return setError('Giá phải lớn hơn 0.')
-    setError('')
-    setBusy(true)
-    try {
-      if (editingId) {
-        await updateMenuItem(editingId, form)
-      } else {
-        await createMenuItem({ ...form, sort_order: items.length + 1 })
-      }
-      setForm(EMPTY)
-      setEditingId(null)
-      await reload()
-    } catch (err) {
-      setError(err.message || 'Lưu món thất bại.')
-    } finally {
-      setBusy(false)
-    }
-  }
-
-  const startEdit = (m) => {
-    setEditingId(m.id)
-    setForm({
-      name: m.name,
-      price: String(m.price),
-      description: m.description || '',
-      category: m.category || '',
-      is_available: m.is_available !== false,
-      sort_order: m.sort_order ?? 0,
-    })
-    window.scrollTo({ top: 0, behavior: 'smooth' })
-  }
-
-  const cancelEdit = () => {
-    setEditingId(null)
-    setForm(EMPTY)
-  }
 
   const onToggle = async (m) => {
     try {
@@ -75,7 +39,6 @@ export default function MenuPage() {
     if (!window.confirm(`Xoá món "${m.name}"?`)) return
     try {
       await deleteMenuItem(m.id)
-      if (editingId === m.id) cancelEdit()
       await reload()
     } catch (e) {
       setError(e.message)
@@ -87,96 +50,24 @@ export default function MenuPage() {
   return (
     <>
       <h2 className="page-heading">Quản lý món</h2>
-      <p className="page-sub">Thêm, sửa, ẩn/hiện món trong thực đơn</p>
+      <p className="page-sub">Danh sách món ăn trong thực đơn</p>
 
       {error && <div className="alert alert-error">{error}</div>}
 
       <section className="panel">
-        <h2 className="panel-title">{editingId ? 'Sửa món' : 'Thêm món mới'}</h2>
-        <form onSubmit={submit} className="form-grid">
-          <div className="field">
-            <label>Tên món *</label>
-            <input
-              value={form.name}
-              onChange={(e) => setForm({ ...form, name: e.target.value })}
-              placeholder="Phở bò tái"
-              required
-            />
-          </div>
-          <div className="field">
-            <label>Giá (đồng) *</label>
-            <input
-              value={form.price}
-              onChange={(e) => setForm({ ...form, price: e.target.value })}
-              placeholder="25000"
-              inputMode="numeric"
-              type="number"
-              min="0"
-              step="1000"
-              required
-            />
-          </div>
-          <div className="field">
-            <label>Nhóm món</label>
-            <input
-              value={form.category}
-              onChange={(e) => setForm({ ...form, category: e.target.value })}
-              placeholder="Món chính / Nước / Tráng miệng"
-              list="cat-list"
-            />
-            <datalist id="cat-list">
-              {categories.map((c) => (
-                <option key={c} value={c} />
-              ))}
-            </datalist>
-          </div>
-          <div className="field">
-            <label>Thứ tự hiển thị</label>
-            <input
-              value={form.sort_order}
-              onChange={(e) => setForm({ ...form, sort_order: e.target.value })}
-              type="number"
-              min="0"
-            />
-          </div>
-          <div className="field field-full">
-            <label>Mô tả</label>
-            <textarea
-              value={form.description}
-              onChange={(e) => setForm({ ...form, description: e.target.value })}
-              rows={2}
-              placeholder="Nước dùng ngọt thanh, thịt bò mềm"
-            />
-          </div>
-          <div className="field field-full form-actions">
-            <label className="check">
-              <input
-                type="checkbox"
-                checked={form.is_available}
-                onChange={(e) => setForm({ ...form, is_available: e.target.checked })}
-              />
-              Đang bán (bỏ chọn = tạm ẩn khỏi thực đơn)
-            </label>
-            <div className="btn-row">
-              {editingId && (
-                <button type="button" className="btn btn-ghost" onClick={cancelEdit}>
-                  Huỷ
-                </button>
-              )}
-              <button type="submit" className="btn btn-primary" disabled={busy}>
-                {busy ? 'Đang lưu…' : editingId ? 'Lưu thay đổi' : 'Thêm món'}
-              </button>
-            </div>
-          </div>
-        </form>
-      </section>
+        <div className="panel-head-row">
+          <h2 className="panel-title panel-title-mb0">Thực đơn ({items.length} món)</h2>
+          <button className="btn btn-primary" onClick={() => setModal({ mode: 'add' })}>
+            ➕ Thêm món
+          </button>
+        </div>
 
-      <section className="panel">
-        <h2 className="panel-title">Thực đơn ({items.length} món)</h2>
         {loading ? (
           <div className="empty">Đang tải…</div>
         ) : items.length === 0 ? (
-          <div className="empty">Chưa có món nào. Hãy thêm món ở ô bên trên.</div>
+          <div className="empty">
+            Chưa có món nào. Bấm nút <strong>➕ Thêm món</strong> để thêm món đầu tiên.
+          </div>
         ) : (
           <div className="table-wrap">
             <table className="table">
@@ -212,7 +103,7 @@ export default function MenuPage() {
                     </td>
                     <td className="t-r">
                       <div className="btn-row btn-row-end">
-                        <button className="btn btn-sm" onClick={() => startEdit(m)}>
+                        <button className="btn btn-sm" onClick={() => setModal({ mode: 'edit', item: m })}>
                           Sửa
                         </button>
                         <button className="btn btn-sm btn-danger" onClick={() => onDelete(m)}>
@@ -227,6 +118,157 @@ export default function MenuPage() {
           </div>
         )}
       </section>
+
+      {modal && (
+        <DishFormModal
+          item={modal.item || null}
+          categories={categories}
+          nextSortOrder={items.length + 1}
+          onCancel={() => setModal(null)}
+          onSaved={async () => {
+            setModal(null)
+            await reload()
+          }}
+        />
+      )}
     </>
+  )
+}
+
+/* --------------------------------------------------------------- *
+ * MODAL THÊM / SỬA MÓN
+ *
+ * Chứa toàn bộ form: tên, giá, nhóm món, thứ tự, mô tả, trạng thái bán.
+ * --------------------------------------------------------------- */
+function DishFormModal({ item, categories, nextSortOrder, onCancel, onSaved }) {
+  const isEdit = Boolean(item)
+
+  const [form, setForm] = useState(() =>
+    isEdit
+      ? {
+          name: item.name,
+          price: String(item.price),
+          description: item.description || '',
+          category: item.category || '',
+          is_available: item.is_available !== false,
+          sort_order: item.sort_order ?? 0,
+        }
+      : { ...EMPTY, sort_order: nextSortOrder },
+  )
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState('')
+
+  const submit = async (e) => {
+    e.preventDefault()
+    if (!form.name.trim()) return setError('Tên món không được để trống.')
+    if (!form.price || Number(form.price) <= 0) return setError('Giá phải lớn hơn 0.')
+    setError('')
+    setBusy(true)
+    try {
+      if (isEdit) {
+        await updateMenuItem(item.id, form)
+      } else {
+        await createMenuItem({ ...form, sort_order: form.sort_order || nextSortOrder })
+      }
+      await onSaved()
+    } catch (err) {
+      setError(err.message || 'Lưu món thất bại.')
+      setBusy(false)
+    }
+  }
+
+  return (
+    <div className="modal-backdrop" onClick={onCancel}>
+      <div className="modal" onClick={(e) => e.stopPropagation()}>
+        <div className="modal-head">
+          <h2>{isEdit ? 'Sửa món' : 'Thêm món mới'}</h2>
+          <button className="btn-icon" onClick={onCancel} aria-label="Đóng">
+            ✕
+          </button>
+        </div>
+
+        <form onSubmit={submit}>
+          <div className="modal-body">
+            {error && <div className="alert alert-error">{error}</div>}
+
+            <div className="form-grid">
+              <div className="field">
+                <label>Tên món *</label>
+                <input
+                  value={form.name}
+                  onChange={(e) => setForm({ ...form, name: e.target.value })}
+                  placeholder="Phở bò tái"
+                  required
+                />
+              </div>
+              <div className="field">
+                <label>Giá (đồng) *</label>
+                <input
+                  value={form.price}
+                  onChange={(e) => setForm({ ...form, price: e.target.value })}
+                  placeholder="25000"
+                  inputMode="numeric"
+                  type="number"
+                  min="0"
+                  step="1000"
+                  required
+                />
+              </div>
+              <div className="field">
+                <label>Nhóm món</label>
+                <input
+                  value={form.category}
+                  onChange={(e) => setForm({ ...form, category: e.target.value })}
+                  placeholder="Món chính / Nước / Tráng miệng"
+                  list="cat-list"
+                />
+                <datalist id="cat-list">
+                  {categories.map((c) => (
+                    <option key={c} value={c} />
+                  ))}
+                </datalist>
+              </div>
+              <div className="field">
+                <label>Thứ tự hiển thị</label>
+                <input
+                  value={form.sort_order}
+                  onChange={(e) => setForm({ ...form, sort_order: e.target.value })}
+                  type="number"
+                  min="0"
+                />
+              </div>
+              <div className="field field-full">
+                <label>Mô tả</label>
+                <textarea
+                  value={form.description}
+                  onChange={(e) => setForm({ ...form, description: e.target.value })}
+                  rows={2}
+                  placeholder="Nước dùng ngọt thanh, thịt bò mềm"
+                />
+              </div>
+              <div className="field field-full">
+                <label className="check">
+                  <input
+                    type="checkbox"
+                    checked={form.is_available}
+                    onChange={(e) => setForm({ ...form, is_available: e.target.checked })}
+                  />
+                  Đang bán (bỏ chọn = tạm ẩn khỏi thực đơn)
+                </label>
+              </div>
+            </div>
+          </div>
+
+          <div className="modal-foot">
+            <button type="button" className="btn btn-ghost" onClick={onCancel}>
+              Huỷ
+            </button>
+            <button type="submit" className="btn btn-primary" disabled={busy}>
+              {busy ? 'Đang lưu…' : isEdit ? 'Lưu thay đổi' : 'Thêm món'}
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
   )
 }

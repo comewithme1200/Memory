@@ -200,13 +200,35 @@ $$;
 
 -- Chỉ khách và chủ quán được gọi hàm này.
 -- LƯU Ý: tên hàm kèm kiểu trả về là `jsonb` (đã đổi từ `uuid`).
-revoke all on function public.create_order(text, text, text, text, text, jsonb) from public;
-revoke all on function public.create_order(text, text, text, text, text, jsonb) from anon;
--- Overload 0 tham số (do các tham số có `default`) — cũng phải gỡ quyền
--- khỏi `public` cho khớp, nhưng VẪN cấp cho `anon` (khách cần đặt món).
-revoke all on function public.create_order() from public;
-grant execute on function public.create_order(text, text, text, text, text, jsonb) to anon, authenticated;
-grant execute on function public.create_order() to anon, authenticated;
+--
+-- ⚠️ VÌ SAO DÙNG `DO` BLOCK?
+--
+-- PostgreSQL KHÔNG tạo hàm overload 0-tham-số cho các tham số có `default`.
+-- Hàm trên tạo ra ĐÚNG MỘT hàm với 6 tham số. Do đó câu lệnh:
+--
+--     revoke all on function public.create_order() from public;
+--
+-- sẽ báo lỗi "function public.create_order() does not exist" — và vì
+-- Supabase chạy file trong 1 transaction, lỗi đó làm HỎNG CẢ FILE.
+--
+-- `DO` block duyệt `pg_proc` nên chạy được với mọi hình dạng hàm.
+do $$
+declare
+  r record;
+begin
+  for r in
+    select p.oid
+    from pg_proc p
+    join pg_namespace n on n.oid = p.pronamespace
+    where n.nspname = 'public'
+      and p.proname = 'create_order'
+  loop
+    execute format('revoke all on function %s from public', r.oid::regprocedure);
+    execute format('revoke all on function %s from anon', r.oid::regprocedure);
+    -- VẪN cấp cho `anon` (khách cần đặt món) và `authenticated`.
+    execute format('grant execute on function %s to anon, authenticated', r.oid::regprocedure);
+  end loop;
+end $$;
 
 -- ---------------------------------------------------------------------
 -- 4) RPC summarize_orders — tổng kết bằng SQL, không tải đơn về JS
@@ -259,13 +281,24 @@ $$;
 -- Chỉ CHỦ QUÁN được xem tổng kết (khách không được biết doanh thu).
 -- PHẢI revoke cho `anon` riêng: `revoke ... from public` KHÔNG đủ, vì `anon`
 -- là thành viên của `public` -> vẫn gọi được hàm và đọc được doanh thu.
-revoke all on function public.summarize_orders(timestamptz, timestamptz) from public;
-revoke all on function public.summarize_orders(timestamptz, timestamptz) from anon;
--- Overload 0 tham số (do các tham số có `default`) cũng phải bị gỡ quyền.
-revoke all on function public.summarize_orders() from public;
-revoke all on function public.summarize_orders() from anon;
-grant execute on function public.summarize_orders(timestamptz, timestamptz) to authenticated;
-grant execute on function public.summarize_orders() to authenticated;
+--
+-- Dùng `DO` block để không phụ thuộc hình dạng hàm (xem giải thích ở trên).
+do $$
+declare
+  r record;
+begin
+  for r in
+    select p.oid
+    from pg_proc p
+    join pg_namespace n on n.oid = p.pronamespace
+    where n.nspname = 'public'
+      and p.proname = 'summarize_orders'
+  loop
+    execute format('revoke all on function %s from public', r.oid::regprocedure);
+    execute format('revoke all on function %s from anon', r.oid::regprocedure);
+    execute format('grant execute on function %s to authenticated', r.oid::regprocedure);
+  end loop;
+end $$;
 
 -- ---------------------------------------------------------------------
 -- 5) Migrate dữ liệu cũ từ JSONB sang order_items

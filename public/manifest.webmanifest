@@ -1,0 +1,56 @@
+{
+  "id": "/quan-an-sang",
+  "name": "Quán Ăn Sáng — Quản lý",
+  "short_name": "Quán Ăn Sáng",
+  "description": "Đặt món ăn sáng nhanh — xem thực đơn, chọn món, bếp nhận đơn ngay.",
+  "lang": "vi",
+  "dir": "ltr",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "display_override": ["standalone", "minimal-ui", "browser"],
+  "orientation": "portrait",
+  "background_color": "#ffffff",
+  "theme_color": "#e8590c",
+  "categories": ["food", "business", "productivity"],
+  "icons": [
+    {
+      "src": "./icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "./icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "./icon-512-maskable.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "maskable"
+    },
+    {
+      "src": "./apple-touch-icon.png",
+      "sizes": "180x180",
+      "type": "image/png",
+      "purpose": "any"
+    }
+  ],
+  "shortcuts": [
+    {
+      "name": "Đơn hàng",
+      "short_name": "Đơn",
+      "url": "./#/quan-tri/orders",
+      "icons": [{ "src": "./icon-192.png", "sizes": "192x192", "type": "image/png" }]
+    },
+    {
+      "name": "Món cần làm",
+      "short_name": "Bếp",
+      "url": "./#/quan-tri/tong-ket",
+      "icons": [{ "src": "./icon-192.png", "sizes": "192x192", "type": "image/png" }]
+    }
+  ]
+}

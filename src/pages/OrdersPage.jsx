@@ -1,8 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { flushSync } from 'react-dom'
-import { listOrders, updateOrderStatus, updateOrderPayment } from '../lib/db.js'
+import { listOrders, updateOrderStatus, updateOrderPayment, expireStaleOrders } from '../lib/db.js'
 import { useOrdersRealtime } from '../lib/useOrdersRealtime.js'
-import { fmtVND, fmtTime } from '../lib/format.js'
+import { fmtVND, fmtTime, todayRange, startOfToday } from '../lib/format.js'
 import Invoice from '../components/Invoice.jsx'
 import PrintPortal from '../components/PrintPortal.jsx'
 import RowMenu from '../components/RowMenu.jsx'
@@ -12,6 +12,7 @@ const STATUS = {
   preparing: { label: 'Đang làm', cls: 'badge-prep' },
   done: { label: 'Hoàn thành', cls: 'badge-ok' },
   cancelled: { label: 'Đã huỷ', cls: 'badge-off' },
+  expired: { label: 'Hết hạn', cls: 'badge-off' },
 }
 
 export default function OrdersPage() {
@@ -42,10 +43,17 @@ export default function OrdersPage() {
    * mới gắn món từ bảng `order_items` vào mỗi đơn. Dữ liệu trả về trực tiếp
    * từ `updateOrderStatus()` là dòng thô của bảng `orders` — KHÔNG có
    * `items` -> in ra hoá đơn trống món.
+   *
+   * ---------------------------------------------------------------------------
+   * CHỈ LOAD ĐƠN TRONG NGÀY HÔM NAY
+   *
+   * Trang "Đơn hàng" là màn hình làm việc trong ngày của chủ quán. Tải lịch
+   * sử cũ lên làm bảng to hình, nặng và dễ sai. Nên ta lọc theo khoảng
+   * [00:00 hôm nay, 23:59:59.999 hôm nay] (giờ địa phương).
    */
   const reload = useCallback(
     () =>
-      listOrders({ limit: 200 })
+      listOrders({ ...todayRange(), limit: 200 })
         .then((list) => {
           setOrders(list)
           return list
@@ -60,6 +68,33 @@ export default function OrdersPage() {
 
   useEffect(() => {
     reload()
+  }, [reload])
+
+  /**
+   * TỰ ĐỘNG EXPIRE đơn quá khứ chưa hoàn thành.
+   *
+   * Chạy 1 lần khi mở trang: mọi đơn `new`/`preparing` tạo trước nửa đêm hôm
+   * nay sẽ chuyển sang `expired` -> tự động biến khỏi bảng "Món cần làm" mà
+   * không cần chủ quán xử lý tay.
+   *
+   * Lỗi expire KHÔNG được làm hỏng trang: bấm "Thử lại" sẽ nạp lại.
+   */
+  const [expiredCount, setExpiredCount] = useState(0)
+  useEffect(() => {
+    let alive = true
+    expireStaleOrders(startOfToday())
+      .then((n) => {
+        if (!alive) return
+        setExpiredCount(n || 0)
+        // Có đơn bị expire -> nạp lại để danh sách phản ánh ngay trạng thái mới.
+        if (n > 0) reload()
+      })
+      .catch(() => {
+        /* Không expire được thì bỏ qua — trang vẫn dùng được. */
+      })
+    return () => {
+      alive = false
+    }
   }, [reload])
 
   const reloadRef = useRef(reload)
@@ -141,6 +176,8 @@ export default function OrdersPage() {
       new: orders.filter((o) => o.status === 'new').length,
       preparing: orders.filter((o) => o.status === 'preparing').length,
       done: orders.filter((o) => o.status === 'done').length,
+      cancelled: orders.filter((o) => o.status === 'cancelled').length,
+      expired: orders.filter((o) => o.status === 'expired').length,
     }
   }, [orders])
 
@@ -227,6 +264,20 @@ export default function OrdersPage() {
         Mới <strong>{counts.new}</strong> · Đang làm <strong>{counts.preparing}</strong> · Hoàn thành{' '}
         <strong>{counts.done}</strong>
       </p>
+      <p className="page-sub page-sub-muted">📅 Chỉ hiển thị đơn của hôm nay</p>
+
+      {expiredCount > 0 && (
+        <div className="alert alert-warn">
+          <span className="alert-warn-icon">⏰</span>
+          <div>
+            <strong>Đã tự động hết hạn {expiredCount} đơn của hôm qua</strong>
+            <div className="alert-warn-body">
+              Các đơn chưa hoàn thành từ hôm trước đã chuyển sang trạng thái "Hết hạn" và không
+              còn hiện trong "Món cần làm".
+            </div>
+          </div>
+        </div>
+      )}
 
       {error && <div className="alert alert-error">{error}</div>}
 
@@ -326,6 +377,7 @@ export default function OrdersPage() {
           { k: 'new', l: 'Mới' },
           { k: 'preparing', l: 'Đang làm' },
           { k: 'done', l: 'Hoàn thành' },
+          { k: 'cancelled', l: 'Đã huỷ' },
           { k: 'all', l: 'Tất cả' },
         ].map((t) => (
           <button
@@ -360,10 +412,27 @@ export default function OrdersPage() {
                         </span>
                       )}
                     </div>
+
+                    {/* ---- THÔNG TIN KHÁCH — TÊN + SĐT NỔI BẬT ----
+                        Tên và số điện thoại là thứ chủ quán/bếp cần đọc ĐẦU TIÊN
+                        để gọi khách và giao hàng. Trước đây chúng bị chìm trong
+                        một dòng `muted small` chung với giờ -> rất khó đọc.
+                        Nay tách riêng, in đậm, cỡ chữ lớn hơn. */}
+                    {(o.customer_name || o.customer_phone) && (
+                      <div className="order-customer">
+                        {o.customer_name && (
+                          <span className="order-customer-name">{o.customer_name}</span>
+                        )}
+                        {o.customer_phone && (
+                          <a className="order-customer-phone" href={`tel:${o.customer_phone}`}>
+                            📞 {o.customer_phone}
+                          </a>
+                        )}
+                      </div>
+                    )}
+
                     <div className="muted small">
                       {fmtTime(o.created_at)}
-                      {o.customer_name ? ` · ${o.customer_name}` : ''}
-                      {o.customer_phone ? ` · ${o.customer_phone}` : ''}
                       {o.table_no ? ` · Bàn ${o.table_no}` : ''}
                     </div>
                     {o.customer_address && (
@@ -502,6 +571,7 @@ function OrderMenu({ order, onStart, onDone, onCancel, onPrint, onPreview, onTog
   const isPreparing = order.status === 'preparing'
   const isDone = order.status === 'done'
   const isCancelled = order.status === 'cancelled'
+  const isExpired = order.status === 'expired'
   const isTransfer = order.payment_method === 'transfer'
 
   // Gom danh sách thao tác phụ, theo trạng thái đơn.
@@ -518,7 +588,8 @@ function OrderMenu({ order, onStart, onDone, onCancel, onPrint, onPreview, onTog
   items.push({ label: 'In hoá đơn', icon: '🖨️', onClick: onPrint })
   if (isDone) items.push({ label: 'Xem hoá đơn', icon: '📄', onClick: onPreview })
   // Chỉ đơn CHƯA XONG mới huỷ được (đơn đã xong rồi thì không huỷ nữa).
-  if (!isDone && !isCancelled) {
+  // Đơn hết hạn (`expired`) cũng không huỷ được — nó đã tự động kết thúc.
+  if (!isDone && !isCancelled && !isExpired) {
     items.push({ label: 'Huỷ đơn', icon: '✖️', danger: true, onClick: onCancel })
   }
 

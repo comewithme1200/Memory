@@ -541,6 +541,88 @@ export async function detachOptionGroup(menuItemId, optionId) {
 }
 
 /* ---------------------------- ORDERS ---------------------------- */
+
+/**
+ * Tự động EXPIRE các đơn quá khứ chưa hoàn thành.
+ *
+ * ---------------------------------------------------------------------------
+ * VÌ SAO CẦN?
+ *
+ * Có thể xảy ra: khách đặt món rồi quán bật nắng, mạng đứt, quán đóng cửa —
+ * đơn bị bỏ lửng ở trạng thái `new`/`preparing` mãi mãi. Sang ngày hôm sau
+ * những đơn đó vẫn hiện trong "Món cần làm" -> bếp tưởng còn món phải làm.
+ *
+ * Ta tự động chuyển chúng sang trạng thái `expired` (hết hạn) khi:
+ *   - `created_at` < mốc bắt đầu của hôm nay, VÀ
+ *   - trạng thái đang là `new` hoặc `preparing` (chưa xong).
+ *
+ * Đơn `done` / `cancelled` / `expired` không bị đụng tới -> lịch sử còn nguyên.
+ *
+ * ---------------------------------------------------------------------------
+ * @param {Date}  before  mốc thời gian; đơn tạo TRƯỚC mốc này mới bị expire.
+ * @returns {Promise<number>} số đơn đang ở trạng thái `expired` do lần chạy này
+ *   (xem ghi chú bên dưới về tính IDEMPOTENT).
+ */
+export async function expireStaleOrders(before = new Date()) {
+  const cutoff = new Date(before).toISOString()
+  const ACTIVE = ['new', 'preparing']
+
+  // Mốc thời gian lần chạy này.
+  //
+  // Hàm này phải IDEMPOTENT: gọi 2 lần liên tiếp phải trả về CÙNG một số,
+  // không phải lần 2 trả về 0.
+  //
+  // VÌ SAO CẦN? React StrictMode gọi effect 2 lần khi mount (để phát hiện
+  // code không sạch). Lần 1 expire 5 đơn, lần 2 thì không còn đơn nào để
+  // expire -> trả về 0 -> giao diện báo "đã hết hạn 0 đơn" dù lần 1 đã
+  // expire 5 đơn thật.
+  //
+  // Cách xử lý: đếm các đơn có `status = 'expired'` VÀ `completed_at` nằm
+  // trong cửa sổ vài phút gần nhất (tức là do lần chạy này hoặc lần chạy
+  // ngay trước đó đặt). Nhờ vậy gọi lại vẫn ra cùng kết quả.
+  const ranAt = new Date()
+  const windowStart = new Date(ranAt.getTime() - 10 * 60 * 1000).toISOString()
+
+  const countExpired = (d) =>
+    d.orders.filter(
+      (o) =>
+        o.status === 'expired' &&
+        o.completed_at &&
+        o.completed_at >= windowStart,
+    ).length
+
+  if (!supabase) {
+    return withLocal((d) => {
+      for (const o of d.orders) {
+        if (!ACTIVE.includes(o.status)) continue
+        if (new Date(o.created_at) >= new Date(cutoff)) continue
+        o.status = 'expired'
+        o.completed_at = o.completed_at || ranAt.toISOString()
+      }
+      return countExpired(d)
+    })
+  }
+
+  // 1 câu UPDATE cho toàn bộ đơn quá khứ chưa xong -> gọn, không tốn request.
+  const { error } = await supabase
+    .from('orders')
+    .update({ status: 'expired', completed_at: ranAt.toISOString() })
+    .in('status', ACTIVE)
+    .lt('created_at', cutoff)
+  if (error) throw new Error(friendlyError(error, 'Dọn đơn quá khứ'))
+
+  // Đếm lại số đơn `expired` vừa được đánh dấu (trong cửa sổ 10 phút) để
+  // hàm cho cùng kết quả dù gọi 1 lần hay nhiều lần (xem ghi chú idempotent
+  // ở trên).
+  const { count, error: countErr } = await supabase
+    .from('orders')
+    .select('id', { count: 'exact', head: true })
+    .eq('status', 'expired')
+    .gte('completed_at', windowStart)
+  if (countErr) throw new Error(friendlyError(countErr, 'Đếm đơn hết hạn'))
+  return count || 0
+}
+
 export async function listOrders({ from, to, limit } = {}) {
   if (!supabase) {
     let orders = readLocal().orders
@@ -997,7 +1079,8 @@ export async function summarize({ from, to } = {}) {
   let orderCount = 0
 
   for (const o of orders) {
-    if (o.status === 'cancelled') continue
+    // Đơn đã huỷ hoặc đã hết hạn -> không tính vào doanh thu / suất bán.
+    if (o.status === 'cancelled' || o.status === 'expired') continue
     orderCount += 1
     for (const it of o.items || []) {
       const key = it.id || it.name

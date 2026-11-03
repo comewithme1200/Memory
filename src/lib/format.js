@@ -33,6 +33,20 @@ export const todayKey = () => dateKey(new Date())
 export const startOfDay = (key) => new Date(`${key}T00:00:00`)
 export const endOfDay = (key) => new Date(`${key}T23:59:59.999`)
 
+/**
+ * Khoảng thời gian của NGÀY HÔM NAY (giờ địa phương).
+ *
+ * Dùng cho trang "Đơn hàng" và "Tổng kết": chỉ tính đơn trong ngày hôm nay,
+ * đồng thời là mốc để tìm các đơn quá khứ chưa hoàn thành (cần expire).
+ */
+export const todayRange = () => {
+  const key = todayKey()
+  return { from: startOfDay(key), to: endOfDay(key) }
+}
+
+/** Mốc thời gian bắt đầu của hôm nay — dùng để lọc đơn quá khứ. */
+export const startOfToday = () => startOfDay(todayKey())
+
 /** Mã đơn ngắn, dễ đọc: 3 chữ cái + 3 số */
 export const randomOrderCode = () => {
   const letters = 'ABCDEFGHJKLMNPQRSTUVWXYZ'

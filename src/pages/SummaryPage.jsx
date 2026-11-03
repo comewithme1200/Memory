@@ -3,55 +3,33 @@ import { summarize } from '../lib/db.js'
 import { useOrdersRealtime } from '../lib/useOrdersRealtime.js'
 import { fmtVND, fmtNumber, dateKey, startOfDay, endOfDay } from '../lib/format.js'
 
-const PRESETS = [
-  { k: 'today', l: 'Hôm nay' },
-  { k: 'yesterday', l: 'Hôm qua' },
-  { k: 'week', l: '7 ngày' },
-  { k: 'month', l: '30 ngày' },
-  { k: 'all', l: 'Tất cả' },
-]
-
-const rangeFor = (preset) => {
-  const now = new Date()
-  switch (preset) {
-    case 'today':
-      return { from: startOfDay(dateKey(now)), to: endOfDay(dateKey(now)) }
-    case 'yesterday': {
-      const y = new Date(now)
-      y.setDate(y.getDate() - 1)
-      return { from: startOfDay(dateKey(y)), to: endOfDay(dateKey(y)) }
-    }
-    case 'week': {
-      const s = new Date(now)
-      s.setDate(s.getDate() - 6)
-      s.setHours(0, 0, 0, 0)
-      return { from: s, to: endOfDay(dateKey(now)) }
-    }
-    case 'month': {
-      const s = new Date(now)
-      s.setDate(s.getDate() - 29)
-      s.setHours(0, 0, 0, 0)
-      return { from: s, to: endOfDay(dateKey(now)) }
-    }
-    default:
-      return {}
-  }
+/**
+ * Tổng kết CHỈ tính đơn trong ngày hôm nay.
+ *
+ * Trang này là bảng số liệu "trong ngày" của chủ quán — đối chiếu với bảng
+ * "Món cần làm" ở tab "Đơn hàng" (cũng chỉ hiện đơn hôm nay). Nếu tổng kết
+ * gộp cả lịch sử cũ thì hai màn hình sẽ lệch nhau rất xa.
+ *
+ * Vì vậy KHÔNG có bộ lọc "Hôm qua / 7 ngày / 30 ngày / Tất cả" nữa.
+ */
+const rangeFor = () => {
+  const key = dateKey(new Date())
+  return { from: startOfDay(key), to: endOfDay(key) }
 }
 
 export default function SummaryPage() {
-  const [preset, setPreset] = useState('today')
   const [data, setData] = useState({ rows: [], totalQty: 0, totalRevenue: 0, orderCount: 0 })
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
 
-  // Hàm nạp lại tổng kết, tách riêng để dùng cho cả lần đầu, đổi bộ lọc
-  // và khi Realtime báo có đơn mới.
+  // Hàm nạp lại tổng kết, tách riêng để dùng cho cả lần đầu và khi
+  // Realtime báo có đơn mới.
   const load = useCallback(() => {
-    const { from, to } = rangeFor(preset)
+    const { from, to } = rangeFor()
     return summarize({ from, to })
       .then(setData)
       .catch((e) => setError(e.message || 'Không tổng kết được'))
-  }, [preset])
+  }, [])
 
   useEffect(() => {
     setLoading(true)
@@ -71,7 +49,7 @@ export default function SummaryPage() {
 
   const copySummary = () => {
     const lines = [
-      `TỔNG KẾT ${PRESETS.find((p) => p.k === preset)?.l.toUpperCase()}`,
+      'TỔNG KẾT HÔM NAY',
       `Số đơn: ${fmtNumber(data.orderCount)} | Tổng suất: ${fmtNumber(data.totalQty)} | Doanh thu: ${fmtVND(data.totalRevenue)}`,
       '---',
       ...data.rows.map((r, i) => `${i + 1}. ${r.name}: ${fmtNumber(r.qty)} suất (${fmtVND(r.revenue)})`),
@@ -82,21 +60,9 @@ export default function SummaryPage() {
   return (
     <>
       <h2 className="page-heading">Tổng kết số lượng</h2>
-      <p className="page-sub">Số suất đã bán theo từng món</p>
+      <p className="page-sub">Số suất đã bán theo từng món trong ngày hôm nay</p>
 
       {error && <div className="alert alert-error">{error}</div>}
-
-      <div className="chips">
-        {PRESETS.map((p) => (
-          <button
-            key={p.k}
-            className={`chip ${preset === p.k ? 'chip-active' : ''}`}
-            onClick={() => setPreset(p.k)}
-          >
-            {p.l}
-          </button>
-        ))}
-      </div>
 
       <div className="stat-row">
         <div className="card stat">

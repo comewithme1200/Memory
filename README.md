@@ -83,6 +83,9 @@ Mở trình duyệt tại: **http://localhost:5173**
 | `npm run check:qr` | Kiểm tra riêng phần **khách quen / mã QR** (bảng `customers`, RPC, quyền) |
 | `npm run check:realtime` | Kiểm tra **Realtime** (đơn mới tự hiện, không cần reload) |
 | `npm run check:options` | Kiểm tra phần **tuỳ chọn món** (bảng `options`, `menu_item_options`) |
+| `npm run check:push` | Kiểm tra phần **Web Push** (bảng `push_subscriptions`, RPC, RLS) |
+| `npm run gen:icons` | Sinh lại icon PWA (PNG cho iOS/Android) trong `public/` |
+| `npm run gen:vapid` | Sinh cặp khoá VAPID cho Web Push |
 | `npm run test:item-price` | Kiểm tra giá món đã cộng `price_delta` của tuỳ chọn chưa |
 | `npm run test:payment` | Kiểm tra phần **thanh toán** (cột `payment_method`, `is_paid`, RPC `create_order`) |
 | `npm run verify:migration` | So khớp dữ liệu đơn cũ (JSONB) với bảng `order_items` |
@@ -311,6 +314,172 @@ Kiểm tra bằng `npm run check:realtime`:
 > trong file `.env` để đăng nhập (Realtime có kiểm tra RLS, khách không nhận
 > được sự kiện của bảng `orders`).
 
+### Bước 2h — (Mới) Âm báo + thông báo đơn mới trên điện thoại
+
+> Khu vực quản trị giờ **kêu chuông** và **bật thông báo hệ thống** mỗi khi
+> có đơn mới, kể cả khi bạn đang ở tab khác (Món ăn, Tổng kết…) — không chỉ
+> hiện ô màu xanh trong trang Đơn hàng.
+
+#### Cách dùng (làm 1 lần trên điện thoại)
+
+1. Mở app bằng Chrome (Android) hoặc Safari (iOS 16.4+) → đăng nhập quản trị.
+2. Ở thanh trên cùng sẽ thấy:
+   - **🔊 Âm báo: BẬT** → bấm để **bật âm thanh** (bắt buộc có thao tác
+     chạm để trình duyệt cho phép phát tiếng).
+   - **🔔 Bật thông báo** → bấm và **cho phép** quyền thông báo khi trình
+     duyệt hỏi. Đây là bước quan trọng nhất nếu muốn nhận thông báo khi
+     đang lướt web hoặc để điện thoại ở chế độ nền.
+3. **Cài app lên màn hình chính** (xem hướng dẫn riêng cho iPhone bên dưới).
+
+#### 📲 Riêng cho iPhone — đúng 2 bước bạn nói là ĐÚNG, nhưng có 1 điều kiện
+
+Cách làm của bạn **chính xác**:
+
+1. **Thêm vào Màn hình chính** — Safari → nút **Chia sẻ (⬆️)** → **Thêm vào
+   Màn hình chính**.
+2. **Cấp quyền thông báo** — **mở app TỪ ICON trên màn hình chính** (KHÔNG
+   mở từ tab Safari) → bấm **🔔 Bật thông báo** → chọn **Cho phép**.
+
+> ⚠️ **ĐIỀU KIỆN QUAN TRỌNG:** bước 2 **phải làm trong app đã cài** (mở từ
+> icon màn hình chính). Nếu bạn bấm "Bật thông báo" khi đang mở trong tab
+> Safari thì iOS sẽ **không** hiện hộp thoại xin quyền — vì Safari iOS chỉ
+> cho phép thông báo trong web app đã cài.
+>
+> Vì vậy app sẽ hiện hộp hướng dẫn màu xanh ngay trên trang quản trị khi
+> phát hiện bạn đang dùng iPhone mà chưa cài app — bấm **🔔 Bật thông báo**
+> lúc đó sẽ được nhắc đúng thứ cần làm.
+
+#### 🧩 Web có phải "apply" gì cho iPhone không? — CÓ, 4 thứ
+
+| # | Thứ | Vì sao | Đã làm? |
+|---|-----|--------|---------|
+| 1 | **Service Worker** (`public/sw.js`) | Safari iOS **không hỗ trợ** `new Notification()`. Chỉ `registration.showNotification()` mới hiện được thông báo. | ✅ |
+| 2 | **Icon PNG 180×180** (`apple-touch-icon.png`) | iOS **không dùng SVG** cho icon màn hình chính — trỏ tới `.svg` là icon bị trống/ảnh chụp màn hình. | ✅ |
+| 3 | **Manifest đầy đủ** (`display: standalone`, `icons`, `shortcuts`) | Để iOS coi đây là app riêng (có thanh địa chỉ riêng, có thêm vào MH chính). | ✅ |
+| 4 | **Web Push + VAPID** | Nhận thông báo khi **màn hình đã khoá** / app đã đóng — chỉ Web Push mới làm được. | ✅ (xem Bước 2i) |
+
+Ngoài ra:
+- **Âm thanh**: iOS chặn autoplay → cần chạm màn hình 1 lần. App tự mở khoá
+  khi bạn chạm bất kỳ đâu (`useAutoUnlockAudio`), và có nút **🔊 Âm báo** để
+  bật/tắt thủ công + nghe thử.
+- **Icon**: sinh bằng `npm run gen:icons` (không cần thư viện ngoài).
+
+#### Khi nào sẽ kêu?
+
+| Tình huống | Có kêu? |
+|---|---|
+| App đang mở, bạn đang ở tab bất kỳ | ✅ Kêu + banner xanh + thông báo hệ thống |
+| Điện thoại để cạnh bàn, màn hình sáng, app mở | ✅ Kêu |
+| **Màn hình khoá / app đã đóng** | ✅ **Có** — nếu đã bật Web Push (Bước 2i) |
+| Chế độ demo (localStorage, chưa cấu hình Supabase) | ✅ Kêu (poll mỗi 5 giây) |
+
+> **Giới hạn còn lại:** iOS **không** cho phát tiếng chuông khi điện thoại
+> đang bật chế độ **không làm phiền (Focus)**. Ngoài ra chỉ nhận được thông
+> báo khi iOS **cho phép** app chạy nền — vào **Cài đặt → Quán Ăn Sáng →
+> Thông báo** để kiểm tra.
+
+### Bước 2i — (Mới) Web Push: nhận thông báo khi màn hình đã khoá
+
+> Đây là phần **server-side**. Bỏ qua bước này thì app vẫn kêu khi đang mở,
+> nhưng **không** kêu được khi điện thoại khoá màn hình.
+
+**Bước 1 — Sinh cặp khoá VAPID**
+
+```bash
+npm run gen:vapid
+```
+
+Lệnh này in ra 2 dòng:
+
+```
+VITE_VAPID_PUBLIC_KEY=BG...
+VAPID_PRIVATE_KEY=MIGH...
+```
+
+- `VITE_VAPID_PUBLIC_KEY` → copy vào `.env` (và `.env.production` nếu deploy
+  bằng GitHub Pages).
+- `VAPID_PRIVATE_KEY` → **giữ kín**, chỉ đặt trong Supabase Secrets.
+
+**Bước 2 — Tạo bảng lưu subscription**
+
+Supabase Dashboard → **SQL Editor** → **New query** → dán
+[`supabase/migration-push-subscriptions.sql`](supabase/migration-push-subscriptions.sql)
+→ **Run**.
+
+> Nếu SQL Editor báo lỗi — hãy chạy lại file (nó **idempotent**, chạy lại
+> nhiều lần vẫn đúng). Kiểm tra bằng:
+>
+> ```bash
+> npm run check:push
+> ```
+>
+> Script sẽ in ra ✅ cho từng hạng mục: bảng tồn tại, RLS chặn đúng khách,
+> 2 RPC có đúng signature, và RPC ghi/xoá thật được.
+
+**Bước 3 — Deploy Edge Functions**
+
+```bash
+npx supabase login
+npx supabase link --project-ref <YOUR_PROJECT_REF>
+npx supabase functions deploy register-push
+npx supabase functions deploy send-push
+```
+
+**Bước 4 — Đặt secrets cho `send-push`**
+
+Supabase Dashboard → **Edge Functions** → `send-push` → **Secrets** → thêm:
+
+| Tên | Giá trị |
+|---|---|
+| `VAPID_PUBLIC_KEY` | giống `VITE_VAPID_PUBLIC_KEY` |
+| `VAPID_PRIVATE_KEY` | giá trị private ở Bước 1 |
+
+> `SUPABASE_URL`, `SUPABASE_ANON_KEY`, `SUPABASE_SERVICE_ROLE_KEY` do Supabase
+> tự cấp sẵn — không cần thêm.
+
+**Bước 5 — Nối tự động khi có đơn mới**
+
+Supabase Dashboard → **Database** → **Webhooks** → **Create Webhook**:
+
+| Ô | Chọn |
+|---|---|
+| Table | `orders` |
+| Events | `Insert` |
+| Type | `Supabase Edge Function` |
+| Function | `send-push` |
+| Header | `Authorization: Bearer <SUPABASE_SERVICE_ROLE_KEY>` |
+
+**Bước 6 — Bật trên điện thoại**
+
+Mở app (đã cài từ màn hình chính) → bấm **🔔 Bật thông báo** → **Cho phép**.
+Thanh công cụ sẽ hiện **📲 Push: BẬT**.
+
+**Kiểm tra:**
+
+```sql
+select count(*) as thiet_bi from public.push_subscriptions;
+```
+
+> = 1 sau khi bật trên điện thoại -> OK.
+
+#### Tham chiếu kỹ thuật
+
+- [`src/lib/pwa.js`](src/lib/pwa.js) — đăng ký Service Worker, Web Push
+  (VAPID), phát hiện iOS/standalone, hướng dẫn cài app.
+- [`public/sw.js`](public/sw.js) — Service Worker: nhận `push`, hiện
+  notification, xử lý `notificationclick`.
+- [`src/lib/notifications.js`](src/lib/notifications.js) — dựng WAV bằng Web
+  Audio API (không cần file âm thanh), xin quyền thông báo, rung máy.
+- [`src/lib/useOrderAlerts.js`](src/lib/useOrderAlerts.js) — hook nghe
+  Realtime (`orders-alerts`) + poll dự phòng, khử trùng theo `order.id`.
+- [`src/pages/AdminLayout.jsx`](src/pages/AdminLayout.jsx) — thanh công cụ
+  bật/tắt âm báo, xin quyền thông báo, banner đơn mới, hướng dẫn cài app.
+- [`public/manifest.webmanifest`](public/manifest.webmanifest) — khai báo PWA.
+- [`supabase/functions/send-push`](supabase/functions/send-push/index.ts) —
+  Edge Function gửi Web Push.
+- [`supabase/functions/register-push`](supabase/functions/register-push/index.ts)
+  — Edge Function lưu subscription của thiết bị.
+
 #### 🏦 Đặt ảnh QR ngân hàng
 
 Mặc định app hiện một khung placeholder. Để hiện **ảnh QR thật của bạn**:
@@ -506,6 +675,10 @@ Bấm **"🖨️ In lại"** ở đơn đã hoàn thành để in lại.
 │   ├── migration-options.sql  # (Nâng cấp) bảng options + tuỳ chọn món
 │   ├── migration-payment.sql  # (Nâng cấp) cột payment_method + is_paid (thanh toán)
 │   ├── migration-realtime.sql  # (Nâng cấp) bật Realtime cho bảng orders (đơn mới tự hiện)
+│   ├── migration-push-subscriptions.sql # (Nâng cấp) bảng push_subscriptions + RPC (Web Push)
+│   ├── functions/
+│   │   ├── register-push/      # Edge Function: lưu subscription của thiết bị
+│   │   └── send-push/          # Edge Function: gửi Web Push khi có đơn mới
 │   ├── fix-create-order-price.sql # Bản vá giá của RPC create_order (sinh tự động)
 │   ├── fix-summarize-permissions.sql  # Gỡ quyền xem doanh thu cho khách
 │   ├── fix-create-order-return.sql   # Đổi create_order trả về jsonb
@@ -515,6 +688,9 @@ Bấm **"🖨️ In lại"** ở đơn đã hoàn thành để in lại.
 │   ├── check-qr-schema.mjs    # Kiểm tra phần khách quen/QR (npm run check:qr)
 │   ├── check-realtime.mjs     # Kiểm tra Realtime (npm run check:realtime)
 │   ├── check-options-schema.mjs # Kiểm tra phần tuỳ chọn (npm run check:options)
+│   ├── check-push-schema.mjs   # Kiểm tra phần Web Push (npm run check:push)
+│   ├── generate-icons.mjs      # Sinh icon PWA PNG (npm run gen:icons)
+│   ├── generate-vapid-keys.mjs # Sinh khoá VAPID cho Web Push (npm run gen:vapid)
 │   ├── test-item-price.mjs    # Kiểm tra giá đã cộng price_delta (npm run test:item-price)
 │   ├── test-payment.mjs       # Kiểm tra phần thanh toán (npm run test:payment)
 │   ├── test-customers-local.mjs # Test luồng khách quen ở chế độ demo (npm run test:local)

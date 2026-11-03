@@ -128,11 +128,31 @@ end;
 $$;
 
 -- Quyền: khách (đặt món) + chủ quán
-revoke all on function public.create_order(text, text, text, text, text, jsonb) from public;
-revoke all on function public.create_order(text, text, text, text, text, jsonb) from anon;
-revoke all on function public.create_order() from public;
-grant execute on function public.create_order(text, text, text, text, text, jsonb) to anon, authenticated;
-grant execute on function public.create_order() to anon, authenticated;
+--
+-- ⚠️ VÌ SAO DÙNG `DO` BLOCK?
+--
+-- PostgreSQL KHÔNG tạo hàm overload 0-tham-số cho các tham số có `default`.
+-- Do đó câu lệnh `revoke ... create_order()` sẽ báo lỗi
+-- "function public.create_order() does not exist" — và vì Supabase chạy
+-- file trong 1 transaction, lỗi đó làm HỎNG CẢ FILE.
+--
+-- `DO` block duyệt `pg_proc` nên chạy được với mọi hình dạng hàm.
+do $$
+declare
+  r record;
+begin
+  for r in
+    select p.oid
+    from pg_proc p
+    join pg_namespace n on n.oid = p.pronamespace
+    where n.nspname = 'public'
+      and p.proname = 'create_order'
+  loop
+    execute format('revoke all on function %s from public', r.oid::regprocedure);
+    execute format('revoke all on function %s from anon', r.oid::regprocedure);
+    execute format('grant execute on function %s to anon, authenticated', r.oid::regprocedure);
+  end loop;
+end $$;
 
 -- ---------------------------------------------------------------------
 -- Kiểm tra sau khi chạy

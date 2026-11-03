@@ -26,6 +26,7 @@ const KEYS = [
   'VITE_SHOP_ADDRESS',
   'VITE_SHOP_PHONE',
   'VITE_BANK_QR_URL',
+  'VITE_VAPID_PUBLIC_KEY',
 ]
 
 const env = { ...process.env }
