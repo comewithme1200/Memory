@@ -51,6 +51,12 @@
       "short_name": "Bếp",
       "url": "./#/quan-tri/tong-ket",
       "icons": [{ "src": "./icon-192.png", "sizes": "192x192", "type": "image/png" }]
+    },
+    {
+      "name": "Trang đặt hàng",
+      "short_name": "Khách",
+      "url": "./",
+      "icons": [{ "src": "./icon-192.png", "sizes": "192x192", "type": "image/png" }]
     }
   ]
 }
