@@ -84,6 +84,7 @@ Mở trình duyệt tại: **http://localhost:5173**
 | `npm run check:realtime` | Kiểm tra **Realtime** (đơn mới tự hiện, không cần reload) |
 | `npm run check:options` | Kiểm tra phần **tuỳ chọn món** (bảng `options`, `menu_item_options`) |
 | `npm run check:push` | Kiểm tra phần **Web Push** (bảng `push_subscriptions`, RPC, RLS) |
+| `npm run apply:push` | Tự tạo 2 RPC cho Web Push qua Supabase Management API (cần `supabase login`) |
 | `npm run gen:icons` | Sinh lại icon PWA (PNG cho iOS/Android) trong `public/` |
 | `npm run gen:vapid` | Sinh cặp khoá VAPID cho Web Push |
 | `npm run test:item-price` | Kiểm tra giá món đã cộng `price_delta` của tuỳ chọn chưa |
@@ -415,6 +416,22 @@ Supabase Dashboard → **SQL Editor** → **New query** → dán
 >
 > Script sẽ in ra ✅ cho từng hạng mục: bảng tồn tại, RLS chặn đúng khách,
 > 2 RPC có đúng signature, và RPC ghi/xoá thật được.
+>
+> **Nếu phần RPC báo FAIL** (file SQL dừng giữa chừng vì lỗi cú pháp) thì
+> dùng 1 trong 2 cách sau:
+>
+> ```bash
+> # Cách 1 — tự động qua Management API (cần `npx supabase login` trước)
+> npm run apply:push
+>
+> # Cách 2 — dán tay: SQL Editor -> copy phần "-- 3) RPC cho client gọi"
+> #          trong file migration-push-subscriptions.sql -> Run
+> ```
+>
+> > 💡 **RPC không bắt buộc.** Edge Function `register-push` đã được viết
+> > theo kiểu: thử RPC trước, nếu RPC không tồn tại thì **ghi thẳng bằng
+> > `service_role`** (tự bypass RLS). Nên push vẫn chạy được ngay cả khi
+> > bạn chưa tạo RPC — chỉ cần bảng `push_subscriptions` tồn tại.
 
 **Bước 3 — Deploy Edge Functions**
 
@@ -643,6 +660,47 @@ git push
 
 > Vite chỉ đọc biến `VITE_*` **lúc build**, nên thay đổi thông tin quán phải build lại rồi push mới có hiệu lực.
 
+### 4. Test trên điện thoại (đã deploy lên GitHub Pages)
+
+> GitHub Pages dùng **HTTPS** → Service Worker + Web Push hoạt động bình thường
+> (không bị chặn như `http://`).
+
+**Cấp độ 1 — App đang mở (test được NGAY, không cần Edge Function)**
+
+| Tính năng | Cần làm gì |
+|---|---|
+| 🔔 Realtime đơn mới tự hiện | Mở app → bấm **🔊 Âm báo: BẬT** → có đơn là có tiếng |
+| 📳 Rung máy | Cần bấm 1 lần vào trang (trình duyệt chặn rung khi chưa tương tác) |
+| 🟢 Banner xanh + toast | Tự hiện, không cần cấu quyền gì |
+
+**Cấp độ 2 — Màn hình khoá / app đã đóng (cần Edge Function)**
+
+Phải làm đủ 4 việc (xem [Bước 2i](#bước-2i--mới-web-push-nhận-thông-báo-khi-màn-hình-đã-khoá)):
+
+1. `npm run apply:push` (hoặc dán tay SQL) — tạo RPC
+2. `npx supabase functions deploy register-push send-push`
+3. Đặt secrets `VAPID_PUBLIC_KEY` + `VAPID_PRIVATE_KEY` cho `send-push`
+4. Tạo **Database Webhook**: table `orders`, event `Insert` → function `send-push`
+
+**Trên iPhone — phải làm đúng thứ tự này:**
+
+1. Mở trang bằng **Safari** (không phải Chrome) → bấm **Chia sẻ** →
+   **Thêm vào Màn hình chính**
+2. **Mở app từ icon trên màn hình chính** (mở bằng Safari sẽ không được)
+3. Trong app → bấm **🔔 Bật thông báo** → **Cho phép**
+4. Thanh công cụ hiện **📲 Push: BẬT** là xong
+
+> ⚠️ Nếu bấm "Bật thông báo" mà trình duyệt **không hiện hộp thoại hỏi
+> Cho phép** → 99% là bạn đang mở trong Safari thay vì mở từ icon màn
+> hình chính. Xoá app khỏi màn hình chính rồi làm lại từ đầu.
+
+**Kiểm tra nhanh trên máy tính:**
+
+```bash
+npm run check:push      # bảng + RLS + RPC
+npm run apply:push     # tạo RPC nếu còn thiếu (cần supabase login)
+```
+
 ---
 
 ## 🖨️ In hoá đơn
@@ -689,6 +747,7 @@ Bấm **"🖨️ In lại"** ở đơn đã hoàn thành để in lại.
 │   ├── check-realtime.mjs     # Kiểm tra Realtime (npm run check:realtime)
 │   ├── check-options-schema.mjs # Kiểm tra phần tuỳ chọn (npm run check:options)
 │   ├── check-push-schema.mjs   # Kiểm tra phần Web Push (npm run check:push)
+│   ├── apply-push-rpcs.mjs    # Tạo RPC Web Push qua Management API (npm run apply:push)
 │   ├── generate-icons.mjs      # Sinh icon PWA PNG (npm run gen:icons)
 │   ├── generate-vapid-keys.mjs # Sinh khoá VAPID cho Web Push (npm run gen:vapid)
 │   ├── test-item-price.mjs    # Kiểm tra giá đã cộng price_delta (npm run test:item-price)
@@ -705,7 +764,10 @@ Bấm **"🖨️ In lại"** ở đơn đã hoàn thành để in lại.
     │   ├── supabase.js        # Khởi tạo Supabase client
     │   ├── auth.jsx           # Phiên đăng nhập (Supabase Auth / PIN demo)
     │   ├── db.js              # Lớp dữ liệu: Supabase hoặc localStorage fallback
-    │   └── format.js          # Định dạng tiền tệ / ngày giờ
+    │   ├── format.js          # Định dạng tiền tệ / ngày giờ
+    │   ├── pwa.js             # Service Worker, Web Push (VAPID), cài app iOS
+    │   ├── notifications.js   # Âm báo (Web Audio) + rung + thông báo hệ thống
+    │   └── useOrderAlerts.js  # Lắng nghe đơn mới (Realtime + polling dự phòng)
     ├── components/
     │   ├── Invoice.jsx        # Giao diện hoá đơn 80mm
     │   ├── BankQr.jsx         # Ảnh QR ngân hàng (public/bank-qr.png) + placeholder
