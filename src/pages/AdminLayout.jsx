@@ -163,7 +163,15 @@ export default function AdminLayout() {
       return
     }
 
-    const p = await requestNotificationPermission()
+    // QUAN TRỌNG (WebKit/iOS): `Notification.requestPermission()` phải được
+    // gọi KỰ trong event handler, không được `await` bất cứ thứ gì trước đó
+    // (một await có thể làm mất "transient activation" -> hộp thoại không
+    // hiện và trả về "denied" một cách bí ��t).
+    //
+    // Ta gọi `requestPermission()` trước, giữ promise, rồi mới làm việc khác.
+    const permissionPromise = requestNotificationPermission()
+
+    const p = await permissionPromise
     setPerm(p)
 
     if (p === 'granted') {

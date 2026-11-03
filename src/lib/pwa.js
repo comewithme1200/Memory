@@ -35,6 +35,16 @@ import { supabase } from './supabase.js'
 const SW_PATH = 'sw.js'
 
 /**
+ * localStorage key lưu VAPID public key đã dùng để subscribe.
+ *
+ * Nếu sau này xoay VAPID key, subscription cũ trong máy sẽ không dùng được
+ * (spec: `subscribe()` với key khác -> `InvalidStateError`). Biết key cũ là
+ * gì thì ta tự huỷ subscription cũ và đăng ký lại, không cần chủ quán gỡ
+ * cài app.
+ */
+const VAPID_KEY_STORAGE = 'quan-an-sang:vapid-key'
+
+/**
  * Đường dẫn tương đối tới gốc ứng dụng.
  *
  * Vite dùng `base: './'` -> bundle nằm ở thư mục con khi deploy lên
@@ -69,6 +79,33 @@ export async function registerServiceWorker() {
   } catch {
     return null
   }
+}
+
+/**
+ * Promise của registration, đã "warm up" từ lúc app khởi động.
+ *
+ * WebKit tiêu thụ transient activation khi hiện hộp thoại quyền. Nếu click
+ * handler phải chờ đăng ký SW (mất vài trăm ms -> vài giây) thì activation
+ * có thể hết hạn và hộp thoại không hiện. Giải pháp: đăng ký SW ngay khi
+ * app mở, để lúc bấm nút thì đã có sẵn.
+ */
+let swRegistrationPromise = null
+
+export function warmUpServiceWorker() {
+  if (swRegistrationPromise) return swRegistrationPromise
+
+  swRegistrationPromise = (async () => {
+    if (typeof navigator === 'undefined' || !('serviceWorker' in navigator)) return null
+    try {
+      const reg = await registerServiceWorker()
+      if (reg) return reg
+    } catch {
+      /* bỏ qua */
+    }
+    return getActiveRegistration()
+  })()
+
+  return swRegistrationPromise
 }
 
 /* ------------------------------------------------------------------ *
@@ -230,7 +267,7 @@ export function explainPushError(e) {
     return `Trình duyệt từ chối (NotAllowedError): thiếu thao tác chạm của người dùng, hoặc quyền thông báo đã bị từ chối. ${msg}`
   }
   if (name === 'InvalidStateError') {
-    return `Service Worker chưa kích hoạt (InvalidStateError): hãy đóng app và mở lại từ icon màn hình chính. ${msg}`
+    return `InvalidStateError: ${msg.includes('active service worker') ? 'Service Worker chưa kích hoạt — hãy đóng app và mở lại từ icon màn hình chính.' : 'Có thể do đổi VAPID key (subscription cũ còn trong máy) — thử gỡ app rồi cài lại, hoặc bấm nút huỷ đăng ký push.'} ${msg}`
   }
   if (name === 'AbortError') {
     return `Đăng ký push bị hủy (AbortError): dịch vụ push của iOS từ chối. Thử gỡ app rồi cài lại. ${msg}`
@@ -255,6 +292,19 @@ export function explainPushError(e) {
 async function getActiveRegistration(timeoutMs = 8000) {
   if (typeof navigator === 'undefined' || !('serviceWorker' in navigator)) return null
 
+  // Ưu tiên promise đã warm up (nhanh nhất, không cần chờ mạng).
+  if (swRegistrationPromise) {
+    try {
+      const warm = await Promise.race([
+        swRegistrationPromise,
+        new Promise((resolve) => setTimeout(() => resolve(undefined), 1500)),
+      ])
+      if (warm) return warm
+    } catch {
+      /* bỏ qua */
+    }
+  }
+
   // Ưu tiên registration đã biết (nhanh, không cần chờ).
   try {
     const existing = await navigator.serviceWorker.getRegistration()
@@ -271,6 +321,35 @@ async function getActiveRegistration(timeoutMs = 8000) {
     ])
   } catch {
     return null
+  }
+}
+
+/**
+ * Subscription hiện tại có dùng đúng VAPID key đang cấu hình không?
+ *
+ * Browser không expose `applicationServerKey` của subscription, nên ta tự
+ * nhớ lại: lúc subscribe thành công, lưu VAPID public key vào localStorage.
+ * Lần sau nếu key đã đổi (xoay khoá) -> subscription cũ không dùng được,
+ * phải huỷ rồi đăng ký lại (nếu không `subscribe()` ném InvalidStateError).
+ *
+ * @returns {Promise<boolean>} true nếu khớp (hoặc không xác định -> coi như khớp)
+ */
+async function subscriptionMatchesVapid(sub, vapidPublicKey) {
+  try {
+    const stored = localStorage.getItem(VAPID_KEY_STORAGE)
+    if (!stored) return true // chưa từng ghi -> không có thông tin, giữ nguyên
+    return stored === vapidPublicKey
+  } catch {
+    return true
+  }
+}
+
+/** Lưu VAPID public key đã dùng để subscribe (để phát hiện trường hợp xoay key). */
+function rememberVapidKey(vapidPublicKey) {
+  try {
+    localStorage.setItem(VAPID_KEY_STORAGE, vapidPublicKey)
+  } catch {
+    /* bỏ qua */
   }
 }
 
@@ -327,15 +406,57 @@ export async function subscribeToPush(opts = {}) {
 
     // Đã đăng ký rồi -> lấy lại subscription
     let existing = await reg.pushManager.getSubscription()
+
+    if (existing) {
+      // Subscription còn từ lần đăng ký với VAPID key KHÁC -> theo spec,
+      // `subscribe()` sẽ ném InvalidStateError. Phải huỷ đăng ký cũ trước.
+      if (!subscriptionMatchesVapid(existing, vapidKey)) {
+        console.warn('[push] Subscription dùng VAPID key cũ -> huỷ và đăng ký lại.')
+        try {
+          await existing.unsubscribe()
+        } catch {
+          /* bỏ qua */
+        }
+        existing = null
+      }
+    }
+
     if (!existing) {
       existing = await reg.pushManager.subscribe({
         userVisibleOnly: true, // BẮT BUỘC với Chrome/V8
         applicationServerKey: urlBase64ToUint8Array(vapidKey),
       })
+      rememberVapidKey(vapidKey)
     }
 
+    setLastPushError('')
     return { ok: true, subscription: existing.toJSON() }
   } catch (e) {
+    // `InvalidStateError` khi subscription cũ dùng VAPID key khác -> thử
+    // huỷ rồi đăng ký lại 1 lần. (Với key cũ KHÔNG lưu trong localStorage
+    // thì không phát hiện được, nên dùng cách này làm lưới an toàn.)
+    if (e?.name === 'InvalidStateError') {
+      try {
+        const reg = await getActiveRegistration()
+        const stale = reg ? await reg.pushManager.getSubscription() : null
+        if (stale) {
+          console.warn('[push] subscribe() bị InvalidStateError -> huỷ subscription cũ và thử lại.')
+          await stale.unsubscribe()
+          const fresh = await reg.pushManager.subscribe({
+            userVisibleOnly: true,
+            applicationServerKey: urlBase64ToUint8Array(vapidKey),
+          })
+          rememberVapidKey(vapidKey)
+          setLastPushError('')
+          return { ok: true, subscription: fresh.toJSON() }
+        }
+      } catch (e2) {
+        const detail = explainPushError(e2)
+        setLastPushError(detail)
+        return { ok: false, reason: 'subscribe-failed', error: detail }
+      }
+    }
+
     const detail = explainPushError(e)
     setLastPushError(detail)
     return { ok: false, reason: 'subscribe-failed', error: detail }

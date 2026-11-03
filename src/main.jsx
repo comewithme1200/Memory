@@ -2,7 +2,11 @@ import React from 'react'
 import ReactDOM from 'react-dom/client'
 import App from './App.jsx'
 import './styles.css'
-import { registerServiceWorker, redirectToAdminIfFromHomeScreen } from './lib/pwa.js'
+import {
+  registerServiceWorker,
+  warmUpServiceWorker,
+  redirectToAdminIfFromHomeScreen,
+} from './lib/pwa.js'
 
 // Mở app từ ICON màn hình chính -> luôn vào trang quản trị.
 //
@@ -27,4 +31,9 @@ ReactDOM.createRoot(document.getElementById('root')).render(
 // `registration.showNotification()` mới hiện được thông báo).
 //
 // Đăng ký thất bại (http, trình duyệt cũ,...) không ảnh hưởng app.
+//
+// `warmUpServiceWorker()` giữ lại promise của registration để lúc chủ quán
+// bấm nút "🔔 Bật thông báo" thì KHÔNG phải chờ đăng ký SW — WebKit yêu cầu
+// thao tác chạm còn "sống" tại thời điểm hiện hộp thoại quyền.
+warmUpServiceWorker()
 registerServiceWorker()
