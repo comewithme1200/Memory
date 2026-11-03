@@ -15,3 +15,6 @@ supabase/.temp/
 
 # Access token của Supabase (KHÔNG commit)
 .supabase-token
+
+.preview.log
+.preview.err
