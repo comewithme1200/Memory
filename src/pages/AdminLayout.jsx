@@ -21,6 +21,7 @@ import {
   getPushSubscription,
   getVapidPublicKey,
   ensurePushSynced,
+  getPushDiagnostics,
 } from '../lib/pwa.js'
 
 export default function AdminLayout() {
@@ -75,6 +76,8 @@ export default function AdminLayout() {
   const [standalone, setStandalone] = useState(isStandalone)
   const [ios, setIos] = useState(isIOS)
   const [pushed, setPushed] = useState(false)
+  // Kết quả chẩn đoán push (hiển thị khi bấm nút "🩺 Chẩn đoán push")
+  const [diag, setDiag] = useState(null)
 
   // Cập nhật lại khi người dùng chuyển app (foreground/background).
   useEffect(() => {
@@ -105,10 +108,11 @@ export default function AdminLayout() {
       if (!alive) return
       setPushed(Boolean(sub))
 
-      if (sub) {
-        const synced = await ensurePushSynced()
-        if (alive) setPushed(Boolean(sub) && synced)
-      }
+      // `ensurePushSynced` tự TẠO subscription nếu chưa có (khi permission đã
+      // granted) rồi đồng bộ lên server. Gọi luôn, không phụ thuộc `sub`.
+      const res = await ensurePushSynced()
+      if (!alive) return
+      if (res?.ok) setPushed(true)
     }
 
     check()
@@ -164,23 +168,31 @@ export default function AdminLayout() {
 
     if (p === 'granted') {
       unlockAudio()
-      setToast('🔔 Đã bật thông báo hệ thống.')
 
       // Đăng ký Web Push để nhận cả khi app đã đóng / màn hình khoá.
+      //
+      // Lưu ý iOS/WebKit: `Notification.requestPermission()` đã tiêu thụ
+      // transient activation của cú chạm. Nhưng khi permission đã "granted"
+      // thì `subscribe()` KHÔNG cần gesture nữa -> gọi thoải mái.
       if (isPushSupported() && getVapidPublicKey()) {
-        const res = await subscribeToPush()
+        const res = await subscribeToPush({ needsGesture: true })
         setPushed(res.ok)
         if (res.ok) {
           // Gửi lên server để server biết gửi push cho thiết bị này.
           const saved = await registerPushWithServer(res.subscription)
+          setPushed(saved)
           setToast(
             saved
               ? '🔔 Đã bật thông báo + đăng ký push kể cả khi app đóng.'
-              : '⚠️ Đã bật thông báo, nhưng CHƯA lưu được push lên server (server chưa có function). Bấm "📲 Đồng bộ push" sau khi deploy xong.',
+              : '⚠️ Đã bật thông báo, nhưng CHƯA lưu được push lên server. Bấm "📲 Đồng bộ push" sau khi deploy function xong.',
           )
         } else {
-          setToast('🔔 Đã bật thông báo (chưa đăng ký push khi app đóng).')
+          setToast(
+            `⚠️ Đã bật thông báo nhưng đăng ký push lỗi (${res.reason}${res.error ? `: ${res.error}` : ''}).`,
+          )
         }
+      } else {
+        setToast('🔔 Đã bật thông báo (trình duyệt này không hỗ trợ Web Push).')
       }
     } else if (p === 'denied') {
       setToast('⚠️ Đã chặn thông báo — hãy bật lại trong cài đặt trình duyệt.')
@@ -205,11 +217,25 @@ export default function AdminLayout() {
    */
   const resyncPush = useCallback(async () => {
     setToast('⏳ Đang đồng bộ push lên server...')
-    const sub = await getPushSubscription()
+    let sub = await getPushSubscription()
+
+    // Chưa có subscription -> thử tạo mới (chỉ thành công nếu permission
+    // đã granted, vì lúc đó WebKit không cần user gesture).
     if (!sub) {
-      setToast('⚠️ Chưa có subscription trên thiết bị này. Bấm "🔔 Bật thông báo" trước.')
+      const res = await subscribeToPush({ needsGesture: true })
+      if (!res.ok) {
+        setToast(
+          `⚠️ Chưa có subscription trên thiết bị này (${res.reason}${res.error ? `: ${res.error}` : ''}). Nếu quyền thông báo đã bật, hãy bấm "🔄 Đăng ký push".`,
+        )
+        return
+      }
+      sub = await getPushSubscription()
+    }
+    if (!sub) {
+      setToast('⚠️ Chưa có subscription trên thiết bị này.')
       return
     }
+
     const saved = await registerPushWithServer(sub)
     setPushed(saved)
     setToast(
@@ -219,9 +245,31 @@ export default function AdminLayout() {
     )
   }, [])
 
+  /**
+   * Chẩn đoán trạng thái push, hiển thị ngay trên máy.
+   *
+   * Dùng khi chủ quán báo "không nhận được thông báo" -> chụp màn hình
+   * gửi lại là biết ngay vướng ở bước nào.
+   */
+  const runPushDiagnostics = useCallback(async () => {
+    const d = await getPushDiagnostics()
+    setDiag(d)
+    const lines = [
+      `App từ màn hình chính: ${d.standalone ? 'CÓ' : 'KHÔNG'}`,
+      `iOS: ${d.ios ? 'CÓ' : 'không'}`,
+      `Service Worker: ${d.swSupported ? 'có' : 'không'} | scope: ${d.swScope || '-'}`,
+      `Quyền thông báo: ${d.permission}`,
+      `Web Push hỗ trợ: ${d.pushSupported ? 'có' : 'KHÔNG'}`,
+      `VAPID key: ${d.vapidKey ? 'có' : 'THIẾU'}`,
+      `Subscription: ${d.hasSubscription ? 'ĐÃ CÓ' : 'CHƯA CÓ'}${d.endpointHost ? ' (' + d.endpointHost + ')' : ''}`,
+      `Đã đồng bộ server: ${d.syncedLocally ? 'có' : 'chưa'}`,
+      d.error ? `Lỗi: ${d.error}` : '',
+    ].filter(Boolean)
+    setToast(lines.join(' • '))
+  }, [])
+
   const installHint = getInstallHint()
   const needsInstall = ios && !standalone
-
   return (
     <div className="page page-admin">
       <header className="topbar">
@@ -261,6 +309,15 @@ export default function AdminLayout() {
           </span>
         )}
 
+        {/* Permission đã bật nhưng chưa có push subscription -> hiện nút
+            đăng ký lại. Không có nút này thì chủ quán không có đường nào
+            để subscribe lại khi WebKit tự xoá subscription. */}
+        {perm === 'granted' && !pushed && (
+          <button className="btn btn-alert btn-alert-cta" onClick={enableNotifications}>
+            🔄 Đăng ký push
+          </button>
+        )}
+
         {pushed && (
           <span className="alert-bar-ok" title="Đã đăng ký Web Push — nhận được kể cả khi app đóng">
             📲 Push: BẬT
@@ -275,6 +332,14 @@ export default function AdminLayout() {
           📲 Đồng bộ push
         </button>
 
+        <button
+          className="btn btn-alert"
+          onClick={runPushDiagnostics}
+          title="Xem trạng thái push chi tiết (chụp màn hình gửi lại nếu chưa nhận được thông báo)"
+        >
+          🩺 Chẩn đoán push
+        </button>
+
         {standalone && (
           <span className="alert-bar-ok" title="Đang chạy từ màn hình chính">
             📱 Đã cài app
@@ -285,6 +350,48 @@ export default function AdminLayout() {
           Đơn mới sẽ kêu + hiện thông báo dù bạn đang ở tab nào.
         </span>
       </div>
+
+      {/* ---- Kết quả chẩn đoán push (bấm "🩺 Chẩn đoán push") ---- */}
+      {diag && (
+        <div className="install-hint" role="note">
+          <div className="install-hint-title">🩺 Chẩn đoán thông báo</div>
+          <ul style={{ margin: '8px 0 0', paddingLeft: '18px', lineHeight: 1.7 }}>
+            <li>
+              Mở từ màn hình chính: <strong>{diag.standalone ? 'CÓ' : 'KHÔNG'}</strong>{' '}
+              {diag.standalone ? '' : '← phải mở app từ icon, không mở tab Safari'}
+            </li>
+            <li>
+              Service Worker: <strong>{diag.swSupported ? 'có' : 'KHÔNG'}</strong>
+              {diag.swScope ? ` (scope: ${diag.swScope})` : ''}
+              {diag.swController ? '' : ' ← chưa có controller, thử đóng/mở lại app'}
+            </li>
+            <li>
+              Quyền thông báo: <strong>{diag.permission}</strong>
+              {diag.permission === 'default' ? ' ← bấm "🔔 Bật thông báo"' : ''}
+              {diag.permission === 'denied' ? ' ← vào Cài đặt Safari để bật lại' : ''}
+            </li>
+            <li>
+              Web Push: <strong>{diag.pushSupported ? 'có' : 'KHÔNG hỗ trợ'}</strong> • VAPID key:{' '}
+              <strong>{diag.vapidKey ? 'có' : 'THIẾU'}</strong>
+            </li>
+            <li>
+              Subscription: <strong>{diag.hasSubscription ? 'ĐÃ CÓ' : 'CHƯA CÓ'}</strong>
+              {diag.endpointHost ? ` (${diag.endpointHost})` : ''}
+              {diag.hasSubscription ? '' : ' ← bấm "🔄 Đăng ký push"'}
+            </li>
+            <li>
+              Đã đồng bộ lên server: <strong>{diag.syncedLocally ? 'có' : 'chưa'}</strong>
+              {diag.syncedLocally ? '' : ' ← bấm "📲 Đồng bộ push"'}
+            </li>
+            {diag.error ? <li>Lỗi: {diag.error}</li> : null}
+            {diag.lastError ? (
+              <li style={{ color: '#b45309' }}>
+                <strong>Lỗi push gần nhất:</strong> {diag.lastError}
+              </li>
+            ) : null}
+          </ul>
+        </div>
+      )}
 
       {/* ---- Hướng dẫn cài app trên iPhone ---- */}
       {needsInstall && (

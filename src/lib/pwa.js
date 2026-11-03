@@ -197,18 +197,123 @@ export function getVapidPublicKey() {
   return typeof key === 'string' && key.trim() ? key.trim() : ''
 }
 
+/* ------------------------------------------------------------------ *
+ * LỖI PUSH GẦN NHẤT (để hiển thị cho chủ quán)
+ * ------------------------------------------------------------------ */
+
+/**
+ * Lỗi push gần nhất, dạng chữ người đọc được.
+ *
+ * Mục đích: khi chủ quán báo "không có thông báo", ta cần biết CHÍNH XÁC
+ * lỗi là gì (WebKit từ chối do thiếu gesture? SW chưa active? endpoint
+ * bị Apple từ chối?) chứ không phải đoán.
+ */
+let lastPushError = ''
+
+export function getLastPushError() {
+  return lastPushError
+}
+
+export function setLastPushError(msg) {
+  lastPushError = msg ? String(msg) : ''
+  if (lastPushError) console.warn('[push] ' + lastPushError)
+}
+
+/**
+ * Dịch lỗi của trình duyệt sang thông điệp dễ hiểu (tiếng Việt).
+ */
+export function explainPushError(e) {
+  const name = e?.name || ''
+  const msg = e?.message || String(e || '')
+
+  if (name === 'NotAllowedError') {
+    return `Trình duyệt từ chối (NotAllowedError): thiếu thao tác chạm của người dùng, hoặc quyền thông báo đã bị từ chối. ${msg}`
+  }
+  if (name === 'InvalidStateError') {
+    return `Service Worker chưa kích hoạt (InvalidStateError): hãy đóng app và mở lại từ icon màn hình chính. ${msg}`
+  }
+  if (name === 'AbortError') {
+    return `Đăng ký push bị hủy (AbortError): dịch vụ push của iOS từ chối. Thử gỡ app rồi cài lại. ${msg}`
+  }
+  if (name === 'NotSupportedError') {
+    return `Trình duyệt/iOS không hỗ trợ Web Push (NotSupportedError): cần iOS 16.4+ và mở app từ màn hình chính. ${msg}`
+  }
+  if (name === 'SecurityError') {
+    return `Không an toàn (SecurityError): Web Push chỉ chạy trên HTTPS. ${msg}`
+  }
+  return `${name ? name + ': ' : ''}${msg}`
+}
+
+/**
+ * Lấy ServiceWorkerRegistration đang hoạt động, có timeout.
+ *
+ * `navigator.serviceWorker.ready` có thể KHÔNG BAO GIỜ resolve nếu đăng ký
+ * SW thất bại (scope sai, SW script lỗi, iOS từ chối...). Khi đó `await` sẽ
+ * treo vô hạn -> nút bấm "không phản ứng gì" và user không hiểu vì sao.
+ * Hàm này luôn trả về trong tối đa `timeoutMs`.
+ */
+async function getActiveRegistration(timeoutMs = 8000) {
+  if (typeof navigator === 'undefined' || !('serviceWorker' in navigator)) return null
+
+  // Ưu tiên registration đã biết (nhanh, không cần chờ).
+  try {
+    const existing = await navigator.serviceWorker.getRegistration()
+    if (existing?.active) return existing
+  } catch {
+    /* bỏ qua */
+  }
+
+  // Chờ `ready` nhưng có timeout.
+  try {
+    return await Promise.race([
+      navigator.serviceWorker.ready,
+      new Promise((resolve) => setTimeout(() => resolve(null), timeoutMs)),
+    ])
+  } catch {
+    return null
+  }
+}
+
 /**
  * Đăng ký thiết bị nhận Web Push.
  *
+ * ---------------------------------------------------------------------------
+ * VÌ SAO CẦN CHIA 2 TRƯỜNG HỢP?
+ *
+ * Theo tài liệu WebKit (Apple):
+ *
+ *   - `Notification.requestPermission()` **tiêu thụ** "transient activation".
+ *     Nếu permission đang là `"default"`, `subscribe()` sẽ bị WebKit từ chối
+ *     với `NotAllowedError` ("Push notification prompting can only be done
+ *     from a user gesture") — và `requestPermission()` sẽ resolve `"denied"`
+ *     mà KHÔNG hiện hộp thoại.
+ *
+ *   - Nếu permission **đã là `"granted"`**, thì `subscribe()` KHÔNG cần
+ *     gesture nữa -> có thể gọi tự động lúc mở app.
+ *
+ * Vì vậy:
+ *   - `subscribeToPush({ needsGesture: true })` -> gọi KỰ trong event handler
+ *     của nút bấm (chủ quán vừa bấm "🔔 Bật thông báo").
+ *   - `subscribeToPush()` (không tham số) -> gọi tự động lúc mở app, CHỈ khi
+ *     permission đã granted. Đây là đường tự phục hồi: nếu lúc trước
+ *     subscribe lỗi (mất mạng, function chưa deploy...) thì lần mở sau sẽ
+ *     tự thử lại.
+ *
+ * @param {{needsGesture?: boolean}} [opts]
  * @returns {Promise<{ok: true, subscription: object} | {ok: false, reason: string, error?: string}>}
  */
-export async function subscribeToPush() {
+export async function subscribeToPush(opts = {}) {
+  const needsGesture = opts.needsGesture === true
+
   if (typeof window === 'undefined') return { ok: false, reason: 'no-window' }
   if (!('serviceWorker' in navigator)) {
     return { ok: false, reason: 'no-service-worker' }
   }
   if (!('PushManager' in window)) {
     return { ok: false, reason: 'no-push-manager' }
+  }
+  if (typeof Notification !== 'undefined' && Notification.permission === 'denied') {
+    return { ok: false, reason: 'permission-denied' }
   }
 
   const vapidKey = getVapidPublicKey()
@@ -217,7 +322,7 @@ export async function subscribeToPush() {
   }
 
   try {
-    const reg = await navigator.serviceWorker.ready
+    const reg = await getActiveRegistration()
     if (!reg) return { ok: false, reason: 'no-registration' }
 
     // Đã đăng ký rồi -> lấy lại subscription
@@ -231,7 +336,9 @@ export async function subscribeToPush() {
 
     return { ok: true, subscription: existing.toJSON() }
   } catch (e) {
-    return { ok: false, reason: 'subscribe-failed', error: e?.message || String(e) }
+    const detail = explainPushError(e)
+    setLastPushError(detail)
+    return { ok: false, reason: 'subscribe-failed', error: detail }
   }
 }
 
@@ -248,22 +355,40 @@ export async function subscribeToPush() {
 export async function registerPushWithServer(subscription) {
   if (!subscription?.endpoint) return false
   try {
-    if (!supabase) return false
+    if (!supabase) {
+      setLastPushError('Chưa cấu hình Supabase trong build (thiếu VITE_SUPABASE_URL / VITE_SUPABASE_ANON_KEY).')
+      return false
+    }
 
-    const { error } = await supabase.functions.invoke('register-push', {
+    const { data, error } = await supabase.functions.invoke('register-push', {
       body: {
         subscription,
         userAgent: navigator.userAgent,
         platform: navigator.platform || '',
       },
     })
+
     if (error) {
-      console.warn('Không lưu được push subscription lên server:', error)
+      const detail = `Server từ chối lưu subscription: ${error.message || JSON.stringify(error)}`
+      setLastPushError(detail)
+      console.warn(detail)
       return false
     }
+
+    // Nếu function trả về { error } dù HTTP 200 -> coi như lỗi.
+    if (data?.error) {
+      const detail = `Edge Function register-push báo lỗi: ${data.error}`
+      setLastPushError(detail)
+      console.warn(detail)
+      return false
+    }
+
+    setLastPushError('')
     return true
   } catch (e) {
-    console.warn('Lỗi khi gửi push subscription lên server:', e)
+    const detail = `Lỗi gọi Edge Function register-push: ${e?.message || String(e)}`
+    setLastPushError(detail)
+    console.warn(detail)
     return false
   }
 }
@@ -308,48 +433,76 @@ function isSynced(endpoint) {
 }
 
 /**
- * Đảm bảo server ĐÃ CÓ subscription của thiết bị này.
+ * Đảm bảo server ĐÃ CÓ subscription của thiết bị này — và TỰ TẠO nếu chưa có.
  *
  * ---------------------------------------------------------------------------
  * VÌ SAO CẦN HÀM NÀY?
  *
  * Subscription là thứ nằm trong browser. Server chỉ gửi push được nếu đã
- * lưu subscription đó trong DB. Nếu lúc bạn bấm "🔔 Bật thông báo" mà Edge
- * Function `register-push` CHƯA được deploy (404) thì:
+ * lưu subscription đó trong DB. Có 2 tình huống hỏng:
  *
- *   - subscription VẪN được tạo trong browser (nên app hiện "📲 Push: BẬT")
- *   - nhưng SERVER KHÔNG CÓ gì để gửi -> màn hình tắt là im lặng.
+ *   1. Lúc bạn bấm "🔔 Bật thông báo", Edge Function `register-push` CHƯA
+ *      được deploy (404) -> subscription có trong browser nhưng SERVER không
+ *      có gì để gửi -> màn hình tắt là im lặng.
  *
- * Hàm này chạy mỗi lần mở app: thấy subscription chưa được sync -> gửi lại
- * lên server. Nhờ vậy chỉ cần deploy function là tự động có push, không
- * cần thao tác lại trên điện thoại.
+ *   2. `pushManager.subscribe()` bị WebKit từ chối (`NotAllowedError`) vì
+ *      không có user gesture -> browser KHÔNG có subscription nào.
  *
- * @returns {Promise<boolean>} true nếu server đã có subscription
+ * Hàm này chạy mỗi lần mở app:
+ *   - chưa có subscription  -> TỰ subscribe (chỉ khi permission đã granted,
+ *     vì lúc đó không cần gesture nữa);
+ *   - có subscription nhưng server chưa biết -> GỬI LẠI lên server.
+ *
+ * Nhờ vậy chỉ cần deploy function là tự động có push, không cần thao tác lại
+ * trên điện thoại.
+ *
+ * @returns {Promise<{ok: boolean, reason?: string}>}
  */
 export async function ensurePushSynced() {
-  if (typeof window === 'undefined') return false
-  if (!('serviceWorker' in navigator)) return false
-  if (!navigator.serviceWorker.controller && !navigator.serviceWorker.ready) return false
+  if (typeof window === 'undefined') return { ok: false, reason: 'no-window' }
+  if (!('serviceWorker' in navigator)) return { ok: false, reason: 'no-service-worker' }
 
   try {
-    const reg = await navigator.serviceWorker.ready
-    if (!reg) return false
+    let reg = await getActiveRegistration()
+    if (!reg) {
+      // Thử đăng ký lại SW (lần đầu mở app có thể SW chưa kịp activate).
+      await registerServiceWorker()
+      reg = await getActiveRegistration()
+    }
+    if (!reg) return { ok: false, reason: 'no-registration' }
 
-    const sub = await reg.pushManager.getSubscription()
-    if (!sub) return false
+    let sub = await reg.pushManager.getSubscription()
+
+    // Chưa có subscription -> thử tự tạo (chỉ thành công nếu permission
+    // đã granted; nếu chưa thì WebKit từ chối -> bỏ qua, chờ người dùng
+    // bấm nút "🔔 Bật thông báo").
+    if (!sub) {
+      const perm = typeof Notification !== 'undefined' ? Notification.permission : 'default'
+      if (perm !== 'granted') {
+        return { ok: false, reason: 'not-permitted' }
+      }
+
+      const res = await subscribeToPush()
+      if (!res.ok) {
+        console.warn('Không tạo được push subscription:', res.reason, res.error || '')
+        return { ok: false, reason: res.reason }
+      }
+      sub = await reg.pushManager.getSubscription()
+      if (!sub) return { ok: false, reason: 'subscribe-failed' }
+    }
 
     const json = sub.toJSON()
-    if (!json?.endpoint) return false
+    if (!json?.endpoint) return { ok: false, reason: 'no-endpoint' }
 
     // Đã sync rồi -> khỏi gọi mạng.
-    if (isSynced(json.endpoint)) return true
+    if (isSynced(json.endpoint)) return { ok: true }
 
     const saved = await registerPushWithServer(json)
     if (saved) markSynced(json.endpoint)
-    return saved
+    return { ok: saved, reason: saved ? undefined : 'server-save-failed' }
   } catch (e) {
     console.warn('Không đồng bộ push subscription:', e)
-    return false
+    return { ok: false, reason: 'error' }
   }
 }
 /**
@@ -358,7 +511,8 @@ export async function ensurePushSynced() {
 export async function unsubscribeFromPush() {
   if (typeof navigator === 'undefined' || !('serviceWorker' in navigator)) return false
   try {
-    const reg = await navigator.serviceWorker.ready
+    const reg = await getActiveRegistration()
+    if (!reg) return false
     const sub = await reg.pushManager.getSubscription()
     if (!sub) return false
     await sub.unsubscribe()
@@ -372,12 +526,75 @@ export async function unsubscribeFromPush() {
 export async function getPushSubscription() {
   if (typeof navigator === 'undefined' || !('serviceWorker' in navigator)) return null
   try {
-    const reg = await navigator.serviceWorker.ready
+    const reg = await getActiveRegistration()
+    if (!reg) return null
     const sub = await reg.pushManager.getSubscription()
     return sub ? sub.toJSON() : null
   } catch {
     return null
   }
+}
+
+/**
+ * Thu thập trạng thái push để hiển thị chẩn đoán trên chính điện thoại.
+ *
+ * Mục đích: khi chủ quán báo "không có thông báo", ta cần biết chính xác
+ * lỗi nằm ở bước nào (SW chưa active? permission chưa granted? subscribe
+ * bị WebKit từ chối? đã có subscription nhưng chưa lên server?).
+ */
+export async function getPushDiagnostics() {
+  const d = {
+    standalone: false,
+    ios: false,
+    swSupported: false,
+    swScope: '',
+    swController: false,
+    pushSupported: false,
+    permission: 'unknown',
+    vapidKey: false,
+    hasSubscription: false,
+    endpointHost: '',
+    syncedLocally: false,
+    lastError: '',
+    error: '',
+  }
+  if (typeof window === 'undefined') return d
+
+  try {
+    d.standalone = window.matchMedia?.('(display-mode: standalone)')?.matches || false
+    d.ios = /iPad|iPhone|iPod/.test(navigator.userAgent)
+    d.swSupported = 'serviceWorker' in navigator
+    d.pushSupported = 'PushManager' in window
+    d.permission = 'Notification' in window ? Notification.permission : 'unsupported'
+    d.vapidKey = Boolean(getVapidPublicKey())
+    d.swController = Boolean(navigator.serviceWorker?.controller)
+
+    if (d.swSupported) {
+      try {
+        const reg = await getActiveRegistration()
+        d.swScope = reg?.scope || ''
+        if (!reg) d.error = 'Service Worker chưa kịp kích hoạt (chưa có registration active).'
+        const sub = reg ? await reg.pushManager.getSubscription() : null
+        if (sub) {
+          d.hasSubscription = true
+          try {
+            d.endpointHost = new URL(sub.endpoint).host
+          } catch {
+            /* bỏ qua */
+          }
+          d.syncedLocally = isSynced(sub.endpoint)
+        }
+      } catch (e) {
+        d.error = e?.message || String(e)
+      }
+    }
+
+    d.lastError = getLastPushError()
+  } catch (e) {
+    d.error = e?.message || String(e)
+  }
+
+  return d
 }
 
 /* ------------------------------------------------------------------ *
