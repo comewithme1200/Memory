@@ -851,9 +851,61 @@ export async function getPushDiagnostics() {
  * ------------------------------------------------------------------ */
 
 /**
+ * Cache dedupe thông báo — CHUNG với Service Worker (`public/sw.js`).
+ *
+ * Mục đích: khi app đang mở, 1 đơn mới có thể được báo bởi cả Realtime
+ * (trong app) lẫn Web Push (từ server) -> iOS hiện 2 banner trùng nhau.
+ * Ghi "đơn nào đã báo" vào Cache Storage để cả hai bên cùng đọc.
+ *
+ * Tên cache PHẢI giống hệt `DEDUPE_CACHE` trong `public/sw.js`.
+ */
+const DEDUPE_CACHE = 'qs-notify-dedupe-v1'
+
+/** Đơn (theo `tag`) đã hiện thông báo gần đây chưa? */
+async function alreadyNotified(tag) {
+  if (typeof window === 'undefined' || !('caches' in window)) return false
+  try {
+    const cache = await window.caches.open(DEDUPE_CACHE)
+    const key = `/notified/${tag}`
+    const hit = await cache.match(key)
+    if (!hit) return false
+    const ts = Number(await hit.text()) || 0
+    if (Date.now() - ts > 10 * 60 * 1000) {
+      await cache.delete(key)
+      return false
+    }
+    return true
+  } catch {
+    return false
+  }
+}
+
+/** Ghi nhớ: đơn này đã hiện thông báo rồi. */
+async function markNotified(tag) {
+  if (typeof window === 'undefined' || !('caches' in window)) return
+  try {
+    const cache = await window.caches.open(DEDUPE_CACHE)
+    await cache.put(`/notified/${tag}`, new Response(String(Date.now())))
+  } catch {
+    /* bỏ qua */
+  }
+}
+
+/**
  * Hiện thông báo. Ưu tiên `registration.showNotification()` vì:
  *   - iOS KHÔNG hỗ trợ `new Notification()`.
  *   - SW notification có thể tồn tại lâu hơn, có onclick xử lý mở app.
+ *
+ * ---------------------------------------------------------------------------
+ * DEDUPE
+ *
+ * Khi app đang mở, một đơn mới có thể được báo bởi CẢ HAI:
+ *   1. Realtime trong app -> hàm này
+ *   2. Web Push từ server -> sự kiện `push` trong Service Worker
+ *
+ * Cả hai dùng cùng `tag`, nhưng iOS vẫn hiện 2 banner riêng. Ta ghi nhớ
+ * "đơn nào đã báo" vào Cache Storage — CHUNG với Service Worker -> chỉ hiện
+ * 1 thông báo cho mỗi đơn.
  *
  * @param {{title?:string, body?:string, tag?:string, url?:string, icon?:string}} opts
  */
@@ -865,12 +917,13 @@ export async function showNotification(opts = {}) {
   const title = opts.title || '🔔 Đơn mới!'
   const iconUrl = opts.icon || assetUrl('icon-192.png')
   const badgeUrl = opts.badge || assetUrl('icon-192.png')
+  const tag = opts.tag || 'quan-an-sang-order'
   const options = {
     body: opts.body || '',
     icon: iconUrl,
     badge: badgeUrl,
-    tag: opts.tag || 'quan-an-sang-order',
-    renotify: true,
+    tag,
+    renotify: false,
     requireInteraction: false,
     // Khi tab đang hiện -> ta tự phát tiếng bằng Web Audio (chắc chắn nghe
     // rõ). Khi tab ẩn -> để hệ thống phát chuông.
@@ -878,6 +931,10 @@ export async function showNotification(opts = {}) {
     data: { url: opts.url || './#/quan-tri/orders' },
     vibrate: [180, 90, 180],
   }
+
+  // Đã báo đơn này rồi (bởi Realtime hoặc bởi push) -> bỏ qua.
+  if (await alreadyNotified(tag)) return null
+  await markNotified(tag)
 
   // 1) Ưu tiên Service Worker (bắt buộc cho iOS)
   if ('serviceWorker' in navigator) {

@@ -373,10 +373,30 @@ begin
 end;
 $$;
 
-grant execute on function public.upsert_push_subscription(text, text, text, uuid, text, text)
+grant execute on function public.upsert_push_subscription(text, text, text, uuid, text, text, text)
   to authenticated;
 grant execute on function public.delete_push_subscription(text)
   to authenticated;
+
+-- Kiểm tra server còn giữ subscription của endpoint này không.
+--
+-- Cờ "đã đồng bộ" trong localStorage có thể SAI: bảng push_subscriptions bị
+-- xoá (đổi VAPID key, dọn thủ công, WebKit tự huỷ subscription) trong khi
+-- client vẫn nghĩ đã sync -> không gửi lại -> không có thông báo.
+-- RPC này cho client hỏi trực tiếp server.
+create or replace function public.has_push_subscription(p_endpoint text)
+returns boolean
+language sql
+security definer
+set search_path = ''
+as $$
+  select exists (
+    select 1 from public.push_subscriptions where endpoint = p_endpoint
+  );
+$$;
+
+grant execute on function public.has_push_subscription(text)
+  to authenticated, service_role;
 
 -- ============================================================================
 -- B) Bảng push_subscriptions (nếu chưa có thì tạo)

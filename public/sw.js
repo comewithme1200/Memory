@@ -29,6 +29,53 @@
 
 const SW_VERSION = 'v1'
 
+/**
+ * Cache dùng để DEDUPE thông báo giữa Service Worker và trang web.
+ *
+ * ---------------------------------------------------------------------------
+ * VÌ SAO CẦN?
+ *
+ * Khi app ĐANG MỞ (tab còn sống), một đơn mới có thể được báo bởi CẢ HAI:
+ *
+ *   1. Realtime trong app -> `showOrderNotification()` -> `reg.showNotification()`
+ *   2. Web Push từ server -> sự kiện `push` -> `showNotification()`
+ *
+ * Cả hai dùng cùng `tag`, nhưng iOS vẫn hiện 2 banner riêng (iOS coi mỗi
+ * lần `showNotification` với `renotify` là 1 lần thông báo mới).
+ *
+ * Dedupe: ghi lại "đơn nào đã báo" vào Cache Storage — SW và trang web đều
+ * đọc/chung cache này -> chỉ hiện 1 thông báo cho mỗi đơn.
+ */
+const DEDUPE_CACHE = 'qs-notify-dedupe-v1'
+
+/** Đơn đã hiện thông báo gần đây (để tránh báo trùng). */
+async function alreadyNotified(key) {
+  try {
+    const cache = await caches.open(DEDUPE_CACHE)
+    const hit = await cache.match(key)
+    if (!hit) return false
+    // Giữ ở cache 10 phút rồi tự xoá.
+    const ts = Number(await hit.text()) || 0
+    if (Date.now() - ts > 10 * 60 * 1000) {
+      await cache.delete(key)
+      return false
+    }
+    return true
+  } catch {
+    return false
+  }
+}
+
+/** Ghi nhớ: đơn này đã hiện thông báo rồi. */
+async function markNotified(key) {
+  try {
+    const cache = await caches.open(DEDUPE_CACHE)
+    await cache.put(key, new Response(String(Date.now())))
+  } catch {
+    /* bỏ qua */
+  }
+}
+
 self.addEventListener('install', (event) => {
   // `skipWaiting()` để bản SW mới có hiệu lực ngay.
   //
@@ -45,7 +92,13 @@ self.addEventListener('activate', (event) => {
   event.waitUntil(
     (async () => {
       const names = await caches.keys()
-      await Promise.all(names.filter((n) => n !== SW_VERSION).map((n) => caches.delete(n)))
+      await Promise.all(
+        names
+          // GIỮ cache dedupe -> nếu xoá, SW và trang web mất trạng thái
+          // "đã báo" chung -> có thể hiện thông báo trùng.
+          .filter((n) => n !== SW_VERSION && n !== DEDUPE_CACHE)
+          .map((n) => caches.delete(n)),
+      )
       await self.clients.claim()
     })(),
   )
@@ -71,6 +124,7 @@ self.addEventListener('push', (event) => {
   const base = self.registration.scope || './'
 
   const title = data.title || '🔔 Đơn mới!'
+  const tag = data.tag || 'quan-an-sang-order'
   const options = {
     body: data.body || '',
     icon: data.icon || `${base}icon-192.png`,
@@ -78,7 +132,7 @@ self.addEventListener('push', (event) => {
     // `tag` giống nhau -> thông báo mới THAY THẾ cái cũ (thay vì cộng dồn).
     // Đây là lưới an toàn: nếu vì lý do gì đó server gửi trùng 2 lần, chủ
     // quán vẫn chỉ thấy 1 thông báo cho mỗi đơn.
-    tag: data.tag || 'quan-an-sang-order',
+    tag,
     // KHÔNG bật `renotify` -> tránh kêu chuông lại khi thông báo bị thay thế.
     renotify: false,
     requireInteraction: false,
@@ -89,7 +143,19 @@ self.addEventListener('push', (event) => {
     vibrate: [180, 90, 180],
   }
 
-  event.waitUntil(self.registration.showNotification(title, options))
+  // Dedupe: nếu trang web ĐÃ hiện thông báo cho đơn này rồi (Realtime trong
+  // app), thì bỏ qua push này -> chủ quán chỉ thấy 1 thông báo cho 1 đơn.
+  event.waitUntil(
+    (async () => {
+      const key = `/notified/${tag}`
+      if (await alreadyNotified(key)) {
+        console.log('[sw] Bỏ qua push trùng cho tag:', tag)
+        return
+      }
+      await markNotified(key)
+      await self.registration.showNotification(title, options)
+    })(),
+  )
 })
 
 /* ------------------------------------------------------------------ *
