@@ -96,6 +96,66 @@ export function isStandalone() {
   return displayMode() === 'standalone'
 }
 
+/* ------------------------------------------------------------------ *
+ * MỞ APP TỪ MÀN HÌNH CHÍNH -> LUÔN VÀO TRANG QUẢN TRỊ
+ * ------------------------------------------------------------------ */
+
+/**
+ * Khi bấm "Thêm vào Màn hình chính", iOS/Android lưu lại **URL đang mở lúc
+ * đó** chứ không phải `start_url` trong manifest. Nên nếu bạn đang đứng ở
+ * trang đặt hàng lúc bấm "Thêm vào MH chính", thì mở icon lên lại vẫn ra
+ * trang đặt hàng — dù manifest đã khai `start_url` là trang quản trị.
+ *
+ * Cách sửa: khi app chạy ở chế độ `standalone` (tức mở từ icon) mà URL hiện
+ * tại KHÔNG phải trang quản trị -> tự chuyển sang trang quản trị.
+ *
+ * Chuyển HAY chỉ 1 lần mỗi phiên: dùng `sessionStorage` làm cờ. Nhờ vậy sau
+ * khi đã vào trang quản trị, chủ quán vẫn vào xem trang đặt hàng được bình
+ * thường mà không bị bật lại về trang quản trị.
+ */
+
+/** Đường dẫn trang quản trị (dùng HashRouter -> có dấu `#`). */
+const ADMIN_HOME = '#/quan-tri/orders'
+
+/** Cờ: phiên này đã xử lý chuyển hướng lần đầu rồi. */
+const REDIRECT_FLAG = 'qsHomeRedirectDone'
+
+/** URL hiện tại có nằm trong khu vực quản trị không? */
+function isAdminUrl() {
+  const hash = window.location.hash || ''
+  return hash.startsWith('#/quan-tri')
+}
+
+/**
+ * Nếu đang mở app từ màn hình chính mà không ở trang quản trị -> chuyển.
+ *
+ * @returns {boolean} true nếu đã chuyển hướng.
+ */
+export function redirectToAdminIfFromHomeScreen() {
+  if (typeof window === 'undefined') return false
+
+  // Chỉ khi mở từ icon màn hình chính (chế độ standalone).
+  if (!isStandalone()) return false
+
+  let done = false
+  try {
+    done = sessionStorage.getItem(REDIRECT_FLAG) === '1'
+    sessionStorage.setItem(REDIRECT_FLAG, '1')
+  } catch {
+    /* Safari private mode -> bỏ qua cờ, vẫn chuyển */
+  }
+
+  // Phiên này đã chuyển rồi -> không chuyển nữa (cho phép xem trang đặt hàng).
+  if (done) return false
+
+  if (!isAdminUrl()) {
+    window.location.hash = ADMIN_HOME
+    return true
+  }
+
+  return false
+}
+
 /** Là iPhone/iPad không? */
 export function isIOS() {
   if (typeof navigator === 'undefined') return false

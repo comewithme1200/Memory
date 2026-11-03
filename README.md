@@ -379,6 +379,27 @@ Ngoài ra:
 > báo khi iOS **cho phép** app chạy nền — vào **Cài đặt → Quán Ăn Sáng →
 > Thông báo** để kiểm tra.
 
+#### 📌 Mở icon màn hình chính -> phải vào trang QUẢN TRỊ
+
+Có 2 vấn đề dễ nhầm ở đây:
+
+**1. `start_url` trong manifest** — khai `"start_url": "./#/quan-tri/orders"` để
+mở icon là vào thẳng trang đơn hàng.
+
+**2. iOS/Android lưu URL lúc bạn bấm "Thêm vào MH chính"** — KHÔNG phải
+`start_url`. Nên nếu lúc đó bạn đang đứng ở trang **đặt hàng**, thì mở icon
+lên lại vẫn ra trang đặt hàng (dù manifest đã khai đúng).
+
+Cách sửa trong code: [`src/lib/pwa.js`](src/lib/pwa.js) →
+`redirectToAdminIfFromHomeScreen()` — khi app chạy ở chế độ `standalone`
+(mở từ icon) mà URL không ở khu vực `#/quan-tri` thì tự chuyển sang trang
+quản trị. Chỉ chuyển **1 lần mỗi phiên** (cờ trong `sessionStorage`) nên sau
+đó bạn vẫn xem được trang đặt hàng bình thường.
+
+> 💡 Nếu đã cài app từ trước mà vẫn mở ra trang đặt hàng: **xoá icon** trên
+> màn hình chính rồi **thêm lại** (lần này mở tab quản trị trước khi bấm
+> "Thêm vào MH chính").
+
 ### Bước 2i — (Mới) Web Push: nhận thông báo khi màn hình đã khoá
 
 > Đây là phần **server-side**. Bỏ qua bước này thì app vẫn kêu khi đang mở,
