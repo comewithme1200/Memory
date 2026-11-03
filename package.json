@@ -18,6 +18,8 @@
     "check:push": "node scripts/check-push-schema.mjs",
     "apply:push": "node scripts/apply-push-rpcs.mjs",
     "setup:push": "node scripts/setup-push.mjs",
+    "fix:vapid": "node scripts/fix-vapid-private.mjs",
+    "sql": "node scripts/sql.mjs",
     "test:price": "node scripts/test-order-price.mjs",
     "test:item-price": "node scripts/test-item-price.mjs",
     "test:payment": "node scripts/test-payment.mjs",

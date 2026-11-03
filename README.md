@@ -86,6 +86,8 @@ Mở trình duyệt tại: **http://localhost:5173**
 | `npm run check:push` | Kiểm tra phần **Web Push** (bảng `push_subscriptions`, RPC, RLS) |
 | `npm run apply:push` | Tự tạo 2 RPC cho Web Push qua Supabase Management API (cần `supabase login`) |
 | `npm run setup:push` | **Setup Web Push trọn vẹn**: deploy Edge Functions + secrets + RPC + trigger (cần `supabase login`) |
+| `npm run fix:vapid` | Đổi `VAPID_PRIVATE_KEY` từ PKCS#8 sang raw 32 byte (web-push yêu cầu) |
+| `npm run sql "<SQL>"` | Chạy 1 câu SQL bất kỳ trên project Supabase qua Management API |
 | `npm run gen:icons` | Sinh lại icon PWA (PNG cho iOS/Android) trong `public/` |
 | `npm run gen:vapid` | Sinh cặp khoá VAPID cho Web Push |
 | `npm run test:item-price` | Kiểm tra giá món đã cộng `price_delta` của tuỳ chọn chưa |
@@ -569,6 +571,33 @@ select count(*) as thiet_bi from public.push_subscriptions;
 > nên sau khi deploy function xong chỉ cần **đóng app mở lại** là có push —
 > không cần gỡ/cài lại. Nếu vẫn chưa, bấm **📲 Đồng bộ push**.
 
+> ⚠️ **Lỗi "Vapid private key should be 32 bytes long when decoded"**
+>
+> Thư viện `web-push` yêu cầu `privateKey` là **32 byte THÔ** (đại lượng EC),
+> không phải DER/PKCS#8 (48 byte). Nếu gặp lỗi này:
+>
+> ```bash
+> npm run fix:vapid     # đổi sang raw 32 byte (giữ nguyên cặp khoá)
+> npm run setup:push    # cập nhật lại Secret cho Edge Function
+> ```
+>
+> Script `generate-vapid-keys.mjs` đã sửa để xuất đúng định dạng ngay từ đầu.
+>
+> **Xem log để chẩn đoán:**
+>
+> ```bash
+> # Các request mà trigger gửi tới Edge Function + kết quả
+> npm run sql "select status_code, content, error_msg from net._http_response order by id desc limit 5;"
+> ```
+>
+> | `status_code` | `content` | Nghĩa là |
+> |---|---|---|
+> | 200 | `{"ok":true,"sent":0,"message":"Chưa có thiết bị đăng ký push."}` | Trigger OK, chưa có điện thoại nào đăng ký → bấm "📲 Đồng bộ push" |
+> | 200 | `{"ok":true,"sent":1,...}` | **Thành công** — đã gửi push tới 1 thiết bị |
+> | 500 | `Vapid private key should be 32 bytes...` | Sai định dạng khoá → `npm run fix:vapid` |
+> | 401 | `permission denied` | Sai service_role key → chạy lại `npm run setup:push` |
+
+
 
 #### Tham chiếu kỹ thuật
 
@@ -840,6 +869,8 @@ Bấm **"🖨️ In lại"** ở đơn đã hoàn thành để in lại.
 │   ├── check-push-schema.mjs   # Kiểm tra phần Web Push (npm run check:push)
 │   ├── apply-push-rpcs.mjs    # Tạo RPC Web Push qua Management API (npm run apply:push)
 │   ├── setup-push.mjs         # Setup Web Push trọn vẹn (npm run setup:push)
+│   ├── fix-vapid-private.mjs  # Đổi VAPID private sang raw 32 byte (npm run fix:vapid)
+│   ├── sql.mjs                # Chạy SQL tự do trên Supabase (npm run sql "<SQL>")
 │   ├── generate-icons.mjs      # Sinh icon PWA PNG (npm run gen:icons)
 │   ├── generate-vapid-keys.mjs # Sinh khoá VAPID cho Web Push (npm run gen:vapid)
 │   ├── test-item-price.mjs    # Kiểm tra giá đã cộng price_delta (npm run test:item-price)

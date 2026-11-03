@@ -408,6 +408,11 @@ create extension if not exists pg_net with schema net;
 create extension if not exists pgcrypto with schema extensions;
 
 -- Cất service_role key vào Vault (mã hoá, không lộ trong pg_dump)
+--
+-- "vault.create_secret" bao loi trung ten neu secret da ton tai -> xoa
+-- ban cu truoc roi tao lai (idempotent, chay lai nhieu lan van dung).
+delete from vault.secrets where name = 'push_service_key';
+
 select vault.create_secret(
   '${serviceRoleKey.replace(/'/g, "''")}',
   'push_service_key',

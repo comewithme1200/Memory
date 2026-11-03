@@ -55,12 +55,20 @@ async function generateVapidKeys() {
   const publicKey = await crypto.subtle.exportKey('spki', keyPair.publicKey)
   const rawPublic = Buffer.from(publicKey).subarray(26)
 
-  // Private key: PKCS#8 -> base64url. Edge Function dùng để ký.
-  const privateKey = await crypto.subtle.exportKey('pkcs8', keyPair.privateKey)
+  // Private key: RAW 32 byte (đại lượng EC).
+  //
+  // ⚠️  PHẢI là 32 byte THÔ, KHÔNG phải PKCS#8/DER.
+  //     Thư viện `web-push` (Edge Function `send-push`) kiểm tra đúng 32 byte
+  //     và sẽ báo lỗi nếu không:
+  //         "Vapid private key should be 32 bytes long when decoded."
+  //
+  //     Xuất PKCS#8 (48 byte) rồi lấy 32 byte CUỐI (chính là đại lượng EC).
+  const pkcs8 = await crypto.subtle.exportKey('pkcs8', keyPair.privateKey)
+  const rawPrivate = Buffer.from(pkcs8).subarray(-32)
 
   return {
     publicKey: base64url(rawPublic),
-    privateKey: base64url(privateKey),
+    privateKey: base64url(rawPrivate),
   }
 }
 
