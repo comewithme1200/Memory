@@ -132,20 +132,43 @@ head('2) RLS — khách (anon) không được ghi subscription')
 // ---------------------------------------------------------------------------
 head('3) RPC')
 const RPCS = [
-  { name: 'upsert_push_subscription', args: ['text', 'text', 'text', 'uuid', 'text', 'text'] },
-  { name: 'delete_push_subscription', args: ['text'] },
+  {
+    name: 'upsert_push_subscription',
+    args: ['text', 'text', 'text', 'uuid', 'text', 'text'],
+    probe: {
+      p_endpoint: 'https://test.invalid/probe',
+      p_p256dh: 'probe',
+      p_auth_key: 'probe',
+      p_user_id: null,
+      p_user_agent: 'check-push-script',
+      p_platform: 'probe',
+    },
+  },
+  {
+    name: 'delete_push_subscription',
+    args: ['text'],
+    probe: { p_endpoint: 'https://test.invalid/probe' },
+  },
 ]
 
 for (const r of RPCS) {
-  // Gọi với tham số rỗng -> chỉ cần biết hàm CÓ tồn tại và signature đúng.
-  const { error } = await anon.rpc(r.name, {})
-  if (error && /could not find the function|does not exist|unknown function/i.test(error.message)) {
+  // Gọi với ĐÚNG tham số -> PostgREST mới resolve được hàm.
+  //
+  // LƯU Ý: gọi với `{}` (không tham số) sẽ luôn báo "Could not find the
+  // function ... without parameters in the schema cache" -> đó là hệ quả của
+  // việc hàm có default, KHÔNG phải hàm không tồn tại. Nên phải probe bằng
+  // đủ tham số rồi mới kết luận.
+  const { error } = await anon.rpc(r.name, r.probe)
+
+  if (!error) {
+    ok(`RPC \`${r.name}\` tồn tại, đúng signature`)
+  } else if (/row-level security|not authorized|permission denied/i.test(error.message)) {
+    ok(`RPC \`${r.name}\` tồn tại (bị chặn cho anon — đúng)`)
+  } else if (/could not find the function|does not exist|unknown function/i.test(error.message)) {
     bad(`RPC \`${r.name}\` chưa tồn tại (hoặc sai signature)`)
     info(`-> Cần: ${r.name}(${r.args.join(', ')})`)
-  } else if (error && /row-level security|not authorized|permission denied/i.test(error.message)) {
-    ok(`RPC \`${r.name}\` tồn tại (bị chặn cho anon — đúng)`)
   } else {
-    ok(`RPC \`${r.name}\` tồn tại, đúng signature`)
+    warn(`Lỗi không xác định: ${error.message}`)
   }
 }
 
@@ -194,15 +217,89 @@ if (!admin) {
 }
 
 // ---------------------------------------------------------------------------
-// 5) Tổng kết
+// 5) Edge Function + trigger (kiểm tra qua Management API nếu có token)
+// ---------------------------------------------------------------------------
+head('5) Edge Functions + trigger trong DB')
+
+// Lấy access token (nếu có) để kiểm tra Edge Function qua Management API.
+let mgmtToken = process.env.SUPABASE_ACCESS_TOKEN || ''
+if (!mgmtToken) {
+  const p = join(ROOT, '.supabase-token')
+  if (existsSync(p)) mgmtToken = readFileSync(p, 'utf8').trim()
+}
+
+const projectRef = url.replace(/^https?:\/\//, '').split('.')[0]
+
+if (!mgmtToken) {
+  warn('Bỏ qua kiểm tra Edge Function — thiếu access token.')
+  info('-> Tạo token tại https://supabase.com/dashboard/account/tokens')
+  info('-> rồi lưu vào file .supabase-token, sau đó chạy lại script này.')
+} else {
+  try {
+    const res = await fetch(`https://api.supabase.com/v1/projects/${projectRef}/functions`, {
+      headers: { Authorization: `Bearer ${mgmtToken}` },
+    })
+    const list = res.ok ? await res.json() : []
+    for (const slug of ['register-push', 'send-push']) {
+      const fn = list.find((f) => f.slug === slug)
+      if (!fn) {
+        bad(`Edge Function \`${slug}\` chưa deploy`)
+        info('-> Chạy `npm run setup:push`')
+      } else if (fn.status !== 'ACTIVE') {
+        bad(`Edge Function \`${slug}\` đang ở trạng thái ${fn.status}`)
+      } else {
+        ok(`Edge Function \`${slug}\` — ACTIVE (v${fn.version})`)
+      }
+    }
+  } catch (e) {
+    warn(`Không kiểm tra được Edge Function: ${e?.message}`)
+  }
+}
+
+// Trigger trong DB -> dùng RPC `push_notify_new_order` tồn tại là đủ, vì
+// trigger được tạo kèm hàm đó. Kiểm tra qua Management API (SQL editor API).
+if (mgmtToken) {
+  try {
+    const res = await fetch(
+      `https://api.supabase.com/v1/projects/${projectRef}/database/query`,
+      {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${mgmtToken}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          query:
+            "select count(*)::int as c from pg_trigger where tgname = 'trg_push_new_order';",
+        }),
+      },
+    )
+    if (res.ok) {
+      const rows = await res.json()
+      const c = Number(rows?.[0]?.c ?? 0)
+      if (c > 0) ok('Trigger `trg_push_new_order` đã tồn tại (đơn mới -> gọi send-push)')
+      else {
+        bad('Chưa có trigger `trg_push_new_order`')
+        info('-> Chạy `npm run setup:push`')
+      }
+    }
+  } catch {
+    /* bỏ qua */
+  }
+}
+
+// ---------------------------------------------------------------------------
+// 6) Tổng kết
 // ---------------------------------------------------------------------------
 console.log('')
 if (failed === 0) {
   console.log(`${GREEN}✓ Phần Web Push sẵn sàng.${RESET}`)
-  console.log(`${DIM}  Bước tiếp theo: deploy Edge Functions + đặt secrets VAPID.${RESET}`)
+  console.log(
+    `${DIM}  Bước cuối: mở app trên điện thoại -> bấm "🔔 Bật thông báo" -> "📲 Đồng bộ push".${RESET}`,
+  )
 } else {
   console.log(`${RED}✗ Có ${failed} vấn đề.${RESET}`)
-  console.log(`${DIM}  Chạy lại: supabase/migration-push-subscriptions.sql${RESET}`)
+  console.log(`${DIM}  Chạy lại: npm run setup:push${RESET}`)
 }
 
 process.exit(failed === 0 ? 0 : 1)

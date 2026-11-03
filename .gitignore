@@ -12,3 +12,6 @@ supabase/.temp/
 .env
 .env.local
 .env.*.local
+
+# Access token của Supabase (KHÔNG commit)
+.supabase-token

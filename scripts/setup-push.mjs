@@ -104,6 +104,17 @@ step('Lấy access token của Supabase')
 
 let accessToken = process.env.SUPABASE_ACCESS_TOKEN || ''
 
+// Cách 1 — file trong project: `.supabase-token` (đã gitignore).
+//   Cách nhanh nhất: tạo PAT tại
+//   https://supabase.com/dashboard/account/tokens rồi lưu vào file đó.
+if (!accessToken) {
+  const p = join(ROOT, '.supabase-token')
+  if (existsSync(p)) {
+    accessToken = readFileSync(p, 'utf8').trim()
+  }
+}
+
+// Cách 2 — CLI đã đăng nhập (token nằm trong config/keyring của CLI).
 if (!accessToken) {
   const cfgPath = join(ROOT, 'supabase', '.temp', 'supabase.json')
   if (existsSync(cfgPath)) {
@@ -116,26 +127,42 @@ if (!accessToken) {
   }
 }
 
+// Cách 3 — CLI lưu token ở thư mục cấu hình riêng.
 if (!accessToken) {
-  try {
-    const out = execFileSync('supabase', ['login', '--help'], {
-      encoding: 'utf8',
-      stdio: ['ignore', 'pipe', 'ignore'],
-    })
-    void out
-  } catch {
-    /* bỏ qua */
+  for (const base of [process.env.APPDATA, process.env.USERPROFILE]) {
+    if (!base) continue
+    for (const rel of ['supabase/access-token', '.supabase/access-token']) {
+      const p = join(base, rel)
+      if (!existsSync(p)) continue
+      try {
+        const t = readFileSync(p, 'utf8').trim()
+        if (t) {
+          accessToken = t
+          break
+        }
+      } catch {
+        /* bỏ qua */
+      }
+    }
+    if (accessToken) break
   }
 }
 
 if (!accessToken) {
-  bad('Chưa đăng nhập Supabase CLI.')
+  bad('Chưa có access token của Supabase.')
   console.log(`
-${CYAN}Chạy lệnh này trước (mở trình duyệt để đăng nhập, xong quay lại đây):${RESET}
+${CYAN}CÁCH NHANH NHẤT (1 phút):${RESET}
 
-  ${CYAN}npx supabase login${RESET}
+1. Tạo Personal Access Token:
+   ${CYAN}https://supabase.com/dashboard/account/tokens${RESET}
+   -> bấm "Generate new token" -> copy chuỗi (bắt đầu bằng ${CYAN}sbp_${RESET})
 
-Sau đó chạy lại:  ${CYAN}npm run setup:push${RESET}
+2. Lưu vào file ${CYAN}.supabase-token${RESET} trong thư mục dự án:
+   ${CYAN}npx supabase login --token sbp_xxxxx${RESET}
+
+3. Chạy lại:  ${CYAN}npm run setup:push${RESET}
+
+${DIM}File .supabase-token đã được .gitignore nên token KHÔNG bị commit lên GitHub.${RESET}
 `)
   process.exit(1)
 }
@@ -261,6 +288,20 @@ step('Đặt secrets (VAPID keys) cho Edge Function')
 /* ------------------------------------------------------------------ *
  * 5) SQL: RPC + Vault + trigger gọi send-push
  * ------------------------------------------------------------------ */
+step('Bật Database Webhooks (tạo schema `net` + `supabase_functions`)')
+
+{
+  const res = await mgmt(`/v1/projects/${projectRef}/database/webhooks/enable`, {
+    method: 'POST',
+  })
+  if (res.ok || res.status === 201 || res.status === 204) {
+    ok('Database Webhooks đã bật.')
+  } else {
+    warn(`Không bật được webhooks (${res.status}) — có thể đã bật sẵn.`)
+    info(String(res.text).slice(0, 300))
+  }
+}
+
 step('Tạo RPC + Database Webhook (trigger gọi send-push)')
 
 const SQL = `
@@ -355,20 +396,18 @@ create policy "push_subs own delete"
 
 -- ============================================================================
 -- C) Bảo đảm pg_net + Vault có sẵn
+--
+-- LƯU Ý: schema "net" và "supabase_functions" do Supabase tạo khi bật
+-- Database Webhooks (endpoint "POST /v1/projects/{ref}/database/webhooks/enable"
+-- — script này gọi trước khi chạy SQL). "pg_net" cũng được cài sẵn kèm.
+--
+-- Nếu "create extension" báo lỗi "schema net does not exist" thì đã bật
+-- webhooks thất bại -> chạy lại script.
 -- ============================================================================
 create extension if not exists pg_net with schema net;
-create extension if not exists pg_vault with schema vault;
+create extension if not exists pgcrypto with schema extensions;
 
--- ============================================================================
--- D) Cất service_role key vào Vault (mã hoá, không lộ trong pg_dump)
--- ============================================================================
-do $$
-begin
-  -- Xoá bản cũ nếu có, rồi tạo lại -> chạy lại script nhiều lần vẫn đúng.
-  delete from vault.secrets where name = 'push_service_key';
-end;
-$$;
-
+-- Cất service_role key vào Vault (mã hoá, không lộ trong pg_dump)
 select vault.create_secret(
   '${serviceRoleKey.replace(/'/g, "''")}',
   'push_service_key',
@@ -376,10 +415,12 @@ select vault.create_secret(
 );
 
 -- ============================================================================
--- E) Trigger: đơn mới -> gọi Edge Function send-push
+-- D) Trigger: đơn mới -> gọi Edge Function send-push
 --
--- Dùng pg_net (bất đồng bộ) -> không làm chậm việc tạo đơn.
--- Key đọc từ Vault lúc chạy -> không nằm trong SQL của trigger.
+-- Dùng "supabase_functions.http_request" (wrapper chuẩn của Supabase cho
+-- Database Webhook) -> tự động thêm header Authorization + apikey.
+--
+-- Nếu hàm này không tồn tại, đổi sang "net.http_post" (bên dưới).
 -- ============================================================================
 create or replace function public.push_notify_new_order()
 returns trigger
@@ -389,6 +430,7 @@ set search_path = ''
 as $$
 declare
   v_key text;
+  v_payload jsonb;
 begin
   select decrypted_secret into v_key
   from vault.decrypted_secrets
@@ -399,6 +441,14 @@ begin
     return new;
   end if;
 
+  v_payload := jsonb_build_object(
+    'type', tg_op,
+    'table', tg_table_name,
+    'schema', tg_table_schema,
+    'record', to_jsonb(new),
+    'old_record', null
+  );
+
   perform net.http_post(
     url := '${supabaseUrl.replace(/'/g, "''")}/functions/v1/send-push',
     headers := jsonb_build_object(
@@ -406,13 +456,7 @@ begin
       'apikey', v_key,
       'Authorization', 'Bearer ' || v_key
     ),
-    body := jsonb_build_object(
-      'type', tg_op,
-      'table', tg_table_name,
-      'schema', tg_table_schema,
-      'record', to_jsonb(new),
-      'old_record', null
-    ),
+    body := v_payload,
     timeout_milliseconds := 5000
   );
 
