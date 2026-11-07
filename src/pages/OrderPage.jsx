@@ -534,6 +534,7 @@ export default function OrderPage() {
           }
           customer={customer}
           qrToken={qrToken}
+          customerResolved={customerResolved}
         />
       )}
 
@@ -624,6 +625,7 @@ function CartBar({
   onEdit,
   customer,
   qrToken,
+  customerResolved,
 }) {
   const [open, setOpen] = useState(false)
   const [name, setName] = useState('')
