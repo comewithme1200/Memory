@@ -796,6 +796,8 @@ export async function createOrder(order) {
     payment_method: order.payment_method === 'transfer' ? 'transfer' : 'cash',
     // Token khách quen (từ QR). Server dùng nó để lấy thông tin trong DB.
     customer_token: (order.customer_token || '').trim(),
+    // Thời gian khách muốn nhận hàng (take away) — null = nhận ngay.
+    pickup_time: order.pickup_time || null,
   }
   if (!supabase) {
     // Chế độ demo (localStorage): tự tra cứu khách quen theo token.
@@ -834,10 +836,41 @@ export async function createOrder(order) {
   // bao giờ vào bếp. Xem scripts/check-supabase.mjs để kiểm chứng.
   //
   // Ta tự sinh `id` (uuid v4) để có sẵn khóa chính, rồi tự dựng object trả về.
-  const row = { id: uuidV4(), ...payload }
-  const { error } = await supabase.from('orders').insert(row)
+  //
+  // CHỈ gửi các cột THẬT của bảng `orders` — `payload` còn chứa `itemOptions`
+  // (mảng tuỳ chọn, không phải cột) -> gửi lên sẽ lỗi "column does not exist".
+  const insertRow = {
+    id: uuidV4(),
+    code: payload.code,
+    customer_name: payload.customer_name,
+    customer_phone: payload.customer_phone,
+    customer_address: payload.customer_address,
+    customer_id: payload.customer_id || null,
+    table_no: payload.table_no,
+    note: payload.note,
+    items: payload.items,
+    total: payload.total,
+    status: payload.status,
+    payment_method: payload.payment_method,
+    is_paid: false,
+    pickup_time: payload.pickup_time || null,
+  }
+
+  let { error } = await supabase.from('orders').insert(insertRow)
+
+  // Cột `pickup_time` chưa tồn tại (DB chưa chạy migration) -> thử lại
+  // không có cột này, đơn vẫn phải tạo được.
+  if (error && /pickup_time|column .* does not exist/i.test(error.message || '')) {
+    const { pickup_time, ...withoutPickup } = insertRow
+    const retry = await supabase.from('orders').insert(withoutPickup)
+    if (!retry.error) {
+      return { ...withoutPickup, created_at: new Date().toISOString(), completed_at: null }
+    }
+    error = retry.error
+  }
+
   if (error) throw new Error(friendlyError(error, 'Đặt hàng'))
-  return { ...row, created_at: new Date().toISOString(), completed_at: null }
+  return { ...insertRow, created_at: new Date().toISOString(), completed_at: null }
 }
 
 /**
@@ -858,61 +891,94 @@ export async function createOrder(order) {
  *     và chốt tên/giá -> client hiển thị khớp 100% với DB.
  */
 async function tryCreateOrderRpc(payload) {
-  // Hàm có 3 phiên bản (tự phát hiện qua lỗi của PostgREST):
-  //   1. KHÔNG CÓ hàm           -> `does not exist` -> fallback insert thẳng
-  //   2. CŨ (6 tham số)         -> không nhận p_customer_address / p_customer_token
-  //   3. MỚI (8 tham số)        -> có địa chỉ + token khách quen
-  // Thử bản mới trước; nếu báo lỗi về tham số -> thử bản cũ.
+  // Hàm có nhiều phiên bản (tự phát hiện qua lỗi của PostgREST).
+  //
+  // `create_order_v2` là bản MỚI NHẤT: giống `create_order` nhưng có thêm
+  // tham số `p_pickup_time` (thời gian khách muốn nhận hàng — take away).
+  // Ta thử V2 TRƯỚC; nếu server chưa migrate (hàm chưa tồn tại) -> rơi xuống
+  // `create_order` cũ (vẫn đặt hàng được, chỉ thiếu giờ nhận hàng).
+  //
+  // LƯU Ý: tên hàm khác nhau (`create_order` vs `create_order_v2`) nên không
+  // bao giờ xảy ra lỗi "ambiguous function call".
   const attempts = [
+    // Bản V2 (11 tham số): có thêm thời gian muốn nhận hàng
+    {
+      fn: 'create_order_v2',
+      args: {
+        p_code: payload.code,
+        p_customer_name: payload.customer_name,
+        p_customer_phone: payload.customer_phone,
+        p_customer_address: payload.customer_address,
+        p_table_no: payload.table_no,
+        p_note: payload.note,
+        p_items: payload.items,
+        p_customer_token: payload.customer_token,
+        p_payment_method: payload.payment_method,
+        p_item_options: payload.itemOptions,
+        p_pickup_time: payload.pickup_time || null,
+      },
+    },
     // Bản mới nhất (10 tham số): thêm cách thanh toán + địa chỉ + token + tuỳ chọn
     {
-      p_code: payload.code,
-      p_customer_name: payload.customer_name,
-      p_customer_phone: payload.customer_phone,
-      p_customer_address: payload.customer_address,
-      p_table_no: payload.table_no,
-      p_note: payload.note,
-      p_items: payload.items,
-      p_customer_token: payload.customer_token,
-      p_payment_method: payload.payment_method,
-      p_item_options: payload.itemOptions,
+      fn: 'create_order',
+      args: {
+        p_code: payload.code,
+        p_customer_name: payload.customer_name,
+        p_customer_phone: payload.customer_phone,
+        p_customer_address: payload.customer_address,
+        p_table_no: payload.table_no,
+        p_note: payload.note,
+        p_items: payload.items,
+        p_customer_token: payload.customer_token,
+        p_payment_method: payload.payment_method,
+        p_item_options: payload.itemOptions,
+      },
     },
     // Bản 9 tham số: có địa chỉ + token khách quen + tuỳ chọn
     {
-      p_code: payload.code,
-      p_customer_name: payload.customer_name,
-      p_customer_phone: payload.customer_phone,
-      p_customer_address: payload.customer_address,
-      p_table_no: payload.table_no,
-      p_note: payload.note,
-      p_items: payload.items,
-      p_customer_token: payload.customer_token,
-      p_item_options: payload.itemOptions,
+      fn: 'create_order',
+      args: {
+        p_code: payload.code,
+        p_customer_name: payload.customer_name,
+        p_customer_phone: payload.customer_phone,
+        p_customer_address: payload.customer_address,
+        p_table_no: payload.table_no,
+        p_note: payload.note,
+        p_items: payload.items,
+        p_customer_token: payload.customer_token,
+        p_item_options: payload.itemOptions,
+      },
     },
     // Bản 8 tham số: có địa chỉ + token, chưa có tuỳ chọn
     {
-      p_code: payload.code,
-      p_customer_name: payload.customer_name,
-      p_customer_phone: payload.customer_phone,
-      p_customer_address: payload.customer_address,
-      p_table_no: payload.table_no,
-      p_note: payload.note,
-      p_items: payload.items,
-      p_customer_token: payload.customer_token,
+      fn: 'create_order',
+      args: {
+        p_code: payload.code,
+        p_customer_name: payload.customer_name,
+        p_customer_phone: payload.customer_phone,
+        p_customer_address: payload.customer_address,
+        p_table_no: payload.table_no,
+        p_note: payload.note,
+        p_items: payload.items,
+        p_customer_token: payload.customer_token,
+      },
     },
     {
-      p_code: payload.code,
-      p_customer_name: payload.customer_name,
-      p_customer_phone: payload.customer_phone,
-      p_table_no: payload.table_no,
-      p_note: payload.note,
-      p_items: payload.items,
+      fn: 'create_order',
+      args: {
+        p_code: payload.code,
+        p_customer_name: payload.customer_name,
+        p_customer_phone: payload.customer_phone,
+        p_table_no: payload.table_no,
+        p_note: payload.note,
+        p_items: payload.items,
+      },
     },
   ]
 
   let data = null
-  for (const args of attempts) {
-    const res = await supabase.rpc('create_order', args)
+  for (const { fn, args } of attempts) {
+    const res = await supabase.rpc(fn, args)
     if (!res.error) {
       data = res.data
       break
@@ -942,6 +1008,11 @@ async function tryCreateOrderRpc(payload) {
     status: 'new',
     payment_method: payload.payment_method,
     is_paid: false,
+    // Token khách quen (từ QR) — giữ lại để trang "Đặt đơn khác" gắn lại
+    // `?qr=` -> khách quay lại vẫn được điền sẵn thông tin.
+    customer_token: payload.customer_token,
+    // Thời gian khách muốn nhận hàng (take away) — null = nhận ngay.
+    pickup_time: payload.pickup_time || null,
     created_at: new Date().toISOString(),
     completed_at: null,
   }
@@ -956,6 +1027,8 @@ async function tryCreateOrderRpc(payload) {
       total: Number(data.total) || 0,
       payment_method: data.payment_method || payload.payment_method,
       is_paid: data.is_paid === true,
+      // Server (create_order_v2) trả về giờ nhận hàng đã chốt.
+      pickup_time: data.pickup_time ?? payload.pickup_time ?? null,
       items: serverItems.map((it, i) => ({
         ...it,
         // Server đã trả kèm `options` (đã chốt giá). Nếu không có (bản cũ),
@@ -1058,6 +1131,9 @@ export async function summarize({ from, to } = {}) {
         name: r.name,
         qty: Number(r.qty) || 0,
         revenue: Number(r.revenue) || 0,
+        // Đơn giá trung bình (để sắp xếp tăng dần trong nhóm cùng tên).
+        // Server chưa có khoá này -> suy ra từ doanh thu / số lượng.
+        price: Number(r.price) || (r.qty ? Math.round(Number(r.revenue) / Number(r.qty)) : 0),
       }))
       return {
         rows,
@@ -1092,7 +1168,13 @@ export async function summarize({ from, to } = {}) {
     totalRevenue += Number(o.total) || 0
   }
 
-  const rows = Array.from(map.values()).sort((a, b) => b.qty - a.qty)
+  const rows = Array.from(map.values())
+    .map((r) => ({
+      ...r,
+      // Đơn giá trung bình (để sắp xếp tăng dần trong nhóm cùng tên).
+      price: r.qty ? Math.round(r.revenue / r.qty) : 0,
+    }))
+    .sort((a, b) => b.qty - a.qty)
   totalQty = rows.reduce((s, r) => s + r.qty, 0)
   return { rows, totalQty, totalRevenue, orderCount }
 }

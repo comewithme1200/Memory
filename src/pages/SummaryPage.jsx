@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { summarize } from '../lib/db.js'
 import { useOrdersRealtime } from '../lib/useOrdersRealtime.js'
 import { fmtVND, fmtNumber, dateKey, startOfDay, endOfDay } from '../lib/format.js'
+import { sortByNameThenPrice } from '../lib/dishSort.js'
 
 /**
  * Tổng kết CHỈ tính đơn trong ngày hôm nay.
@@ -47,12 +48,33 @@ export default function SummaryPage() {
 
   const maxQty = useMemo(() => Math.max(1, ...data.rows.map((r) => r.qty)), [data.rows])
 
+  /**
+   * Sắp xếp bảng "Số lượng từng món".
+   *
+   * QUY TẮC:
+   *   1. Các món CÙNG TÊN nằm cạnh nhau (vd "Xôi gà" size nhỏ và size to
+   *      là 2 dòng liền kề, không lơ lửng 2 đầu bảng).
+   *   2. Trong mỗi nhóm cùng tên, đơn giá TĂNG DẦN (rẻ hơn lên trước).
+   *   3. Thứ tự giữa các nhóm: món bán chạy nhất lên đầu (như cũ).
+   */
+  const sortedRows = useMemo(
+    () =>
+      sortByNameThenPrice(
+        data.rows,
+        (r) => Number(r.price) || 0,
+        (r) => Number(r.qty) || 0,
+      ),
+    [data.rows],
+  )
+
   const copySummary = () => {
     const lines = [
       'TỔNG KẾT HÔM NAY',
       `Số đơn: ${fmtNumber(data.orderCount)} | Tổng suất: ${fmtNumber(data.totalQty)} | Doanh thu: ${fmtVND(data.totalRevenue)}`,
       '---',
-      ...data.rows.map((r, i) => `${i + 1}. ${r.name}: ${fmtNumber(r.qty)} suất (${fmtVND(r.revenue)})`),
+      ...sortedRows.map(
+        (r, i) => `${i + 1}. ${r.name}: ${fmtNumber(r.qty)} suất (${fmtVND(r.revenue)})`,
+      ),
     ]
     navigator.clipboard?.writeText(lines.join('\n'))
   }
@@ -103,11 +125,14 @@ export default function SummaryPage() {
                 </tr>
               </thead>
               <tbody>
-                {data.rows.map((r, i) => (
+                {sortedRows.map((r, i) => (
                   <tr key={r.id}>
                     <td className="muted td-plain">{i + 1}</td>
                     <td className="td-title">
                       <strong>{r.name}</strong>
+                      {r.price ? (
+                        <span className="muted small"> · {fmtVND(r.price)}</span>
+                      ) : null}
                     </td>
                     <td data-label="Tỉ lệ">
                       <div className="bar">

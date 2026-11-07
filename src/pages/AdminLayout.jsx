@@ -73,12 +73,17 @@ export default function AdminLayout() {
   const [perm, setPerm] = useState(notificationPermission())
   const [toast, setToast] = useState('')
 
+  // Menu bánh răng (gom các nút cài đặt thông báo).
+  const [menuOpen, setMenuOpen] = useState(false)
+
+  // Modal hiển thị kết quả / thông báo khi bấm các nút trong menu.
+  const [modal, setModal] = useState(null) // { title, lines: string[] }
+
   // Trạng thái PWA: đang mở từ màn hình chính (iPhone) hay trong trình duyệt?
   const [standalone, setStandalone] = useState(isStandalone)
   const [ios, setIos] = useState(isIOS)
   const [pushed, setPushed] = useState(false)
-  // Kết quả chẩn đoán push (hiển thị khi bấm nút "🩺 Chẩn đoán push")
-  const [diag, setDiag] = useState(null)
+  // Kết quả chẩn đoán push (hiển thị trong modal khi bấm "🩺 Chẩn đoán push")
 
   // Cập nhật lại khi người dùng chuyển app (foreground/background).
   useEffect(() => {
@@ -132,6 +137,21 @@ export default function AdminLayout() {
     return () => clearTimeout(t)
   }, [toast])
 
+  /**
+   * Hiện thông báo kết quả trong MODAL (kèm nút Đóng).
+   *
+   * Trước đây các kết quả này hiện ở `toast` tự tắt sau 5s -> chủ quán
+   * đọc không kịp, đặc biệt là thông báo lỗi dài. Nay hiện trong modal,
+   * chủ quán đọc xong mới bấm "Đóng".
+   */
+  const showResult = useCallback((title, lines) => {
+    setModal({
+      title,
+      lines: (Array.isArray(lines) ? lines : [lines]).filter(Boolean),
+    })
+    setMenuOpen(false)
+  }, [])
+
   const toggleSound = useCallback(() => {
     const next = !soundOn
     setSoundOn(next)
@@ -139,11 +159,11 @@ export default function AdminLayout() {
     if (next) {
       unlockAudio()
       playAlertSound(true) // thử tiếng ngay để chủ quán kiểm tra
-      setToast('🔊 Đã bật âm báo đơn mới.')
+      showResult('Âm báo', ['🔊 Đã bật âm báo đơn mới.'])
     } else {
-      setToast('🔇 Đã tắt âm báo.')
+      showResult('Âm báo', ['🔇 Đã tắt âm báo.'])
     }
-  }, [soundOn])
+  }, [soundOn, showResult])
 
   /**
    * Bật thông báo + Web Push.
@@ -154,13 +174,15 @@ export default function AdminLayout() {
    */
   const enableNotifications = useCallback(async () => {
     if (!isNotificationSupported()) {
-      setToast('Trình duyệt này không hỗ trợ thông báo.')
+      showResult('Thông báo', ['Trình duyệt này không hỗ trợ thông báo.'])
       return
     }
 
     if (isIOS() && !isStandalone()) {
       const hint = getInstallHint()
-      setToast(`📲 ${hint?.text || 'Hãy thêm app vào màn hình chính rồi mở lại từ icon.'}`)
+      showResult('Thông báo', [
+        `📲 ${hint?.text || 'Hãy thêm app vào màn hình chính rồi mở lại từ icon.'}`,
+      ])
       return
     }
 
@@ -190,30 +212,30 @@ export default function AdminLayout() {
           // Gửi lên server để server biết gửi push cho thiết bị này.
           const saved = await registerPushWithServer(res.subscription)
           setPushed(saved)
-          setToast(
+          showResult('Thông báo', [
             saved
               ? '🔔 Đã bật thông báo + đăng ký push kể cả khi app đóng.'
               : '⚠️ Đã bật thông báo, nhưng CHƯA lưu được push lên server. Bấm "📲 Đồng bộ push" sau khi deploy function xong.',
-          )
+          ])
         } else {
-          setToast(
+          showResult('Thông báo', [
             `⚠️ Đã bật thông báo nhưng đăng ký push lỗi (${res.reason}${res.error ? `: ${res.error}` : ''}).`,
-          )
+          ])
         }
       } else {
-        setToast('🔔 Đã bật thông báo (trình duyệt này không hỗ trợ Web Push).')
+        showResult('Thông báo', ['🔔 Đã bật thông báo (trình duyệt này không hỗ trợ Web Push).'])
       }
     } else if (p === 'denied') {
-      setToast('⚠️ Đã chặn thông báo — hãy bật lại trong cài đặt trình duyệt.')
+      showResult('Thông báo', ['⚠️ Đã chặn thông báo — hãy bật lại trong cài đặt trình duyệt.'])
     } else {
-      setToast('Chưa được cấp quyền thông báo.')
+      showResult('Thông báo', ['Chưa được cấp quyền thông báo.'])
     }
-  }, [])
+  }, [showResult])
 
   // Nhắc nhở bật thông báo hệ thống khi vào khu vực quản trị.
   useEffect(() => {
     if (perm === 'default' && isNotificationSupported()) {
-      setToast('💡 Bấm "🔔 Bật thông báo" để nhận báo đơn mới khi đang lướt web.')
+      setToast('💡 Bấm nút ⚙️ ở góc phải → "🔔 Bật thông báo" để nhận báo đơn mới.')
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
@@ -225,7 +247,6 @@ export default function AdminLayout() {
    * chưa đồng bộ — bấm 1 phát là xong, không cần gỡ/cài lại app.
    */
   const resyncPush = useCallback(async () => {
-    setToast('⏳ Đang đồng bộ push lên server...')
     let sub = await getPushSubscription()
 
     // Chưa có subscription -> thử tạo mới (chỉ thành công nếu permission
@@ -233,26 +254,27 @@ export default function AdminLayout() {
     if (!sub) {
       const res = await subscribeToPush({ needsGesture: true })
       if (!res.ok) {
-        setToast(
-          `⚠️ Chưa có subscription trên thiết bị này (${res.reason}${res.error ? `: ${res.error}` : ''}). Nếu quyền thông báo đã bật, hãy bấm "🔄 Đăng ký push".`,
-        )
+        showResult('Đồng bộ push', [
+          `⚠️ Chưa có subscription trên thiết bị này (${res.reason}${res.error ? `: ${res.error}` : ''}).`,
+          'Nếu quyền thông báo đã bật, hãy bấm "🔄 Đăng ký push".',
+        ])
         return
       }
       sub = await getPushSubscription()
     }
     if (!sub) {
-      setToast('⚠️ Chưa có subscription trên thiết bị này.')
+      showResult('Đồng bộ push', ['⚠️ Chưa có subscription trên thiết bị này.'])
       return
     }
 
     const saved = await registerPushWithServer(sub)
     setPushed(saved)
-    setToast(
+    showResult('Đồng bộ push', [
       saved
         ? '✅ Đã đồng bộ push lên server. Tắt màn hình thử lại nhé!'
         : '❌ Đồng bộ thất bại — server chưa có Edge Function `register-push`.',
-    )
-  }, [])
+    ])
+  }, [showResult])
 
   /**
    * Huỷ đăng ký push trên thiết bị này.
@@ -261,7 +283,6 @@ export default function AdminLayout() {
    * ném `InvalidStateError` mãi. Huỷ đi rồi bấm "🔄 Đăng ký push" là sạch.
    */
   const resetPush = useCallback(async () => {
-    setToast('⏳ Đang huỷ đăng ký push...')
     const ok = await unsubscribeFromPush()
     try {
       localStorage.removeItem('quan-an-sang:vapid-key')
@@ -270,12 +291,12 @@ export default function AdminLayout() {
       /* bỏ qua */
     }
     setPushed(false)
-    setToast(
+    showResult('Đặt lại push', [
       ok
         ? '🗑️ Đã huỷ đăng ký push. Bấm "🔄 Đăng ký push" để đăng ký lại.'
         : '⚠️ Không có subscription để huỷ.',
-    )
-  }, [])
+    ])
+  }, [showResult])
 
   /**
    * Chẩn đoán trạng thái push, hiển thị ngay trên máy.
@@ -285,7 +306,6 @@ export default function AdminLayout() {
    */
   const runPushDiagnostics = useCallback(async () => {
     const d = await getPushDiagnostics()
-    setDiag(d)
     const lines = [
       `App từ màn hình chính: ${d.standalone ? 'CÓ' : 'KHÔNG'}`,
       `iOS: ${d.ios ? 'CÓ' : 'không'}`,
@@ -297,9 +317,10 @@ export default function AdminLayout() {
       `Subscription: ${d.hasSubscription ? 'ĐÃ CÓ' : 'CHƯA CÓ'}${d.endpointHost ? ' (' + d.endpointHost + ')' : ''}`,
       `Đã đồng bộ server: ${d.syncedLocally ? 'có' : 'chưa'}`,
       d.error ? `Lỗi: ${d.error}` : '',
+      d.lastError ? `Lỗi push gần nhất: ${d.lastError}` : '',
     ].filter(Boolean)
-    setToast(lines.join(' • '))
-  }, [])
+    showResult('🩺 Chẩn đoán thông báo', lines)
+  }, [showResult])
 
   const installHint = getInstallHint()
   const needsInstall = ios && !standalone
@@ -320,66 +341,30 @@ export default function AdminLayout() {
         </button>
       </header>
 
-      {/* ---- Thanh công cụ âm báo đơn mới ---- */}
+      {/* ---- Thanh công cụ âm báo đơn mới (gọn: 1 nút bánh răng) ---- */}
       <div className="alert-bar">
-        <button
-          className={`btn btn-alert ${soundOn ? 'btn-alert-on' : ''}`}
-          onClick={toggleSound}
-          title={soundOn ? 'Tắt âm báo' : 'Bật âm báo'}
+        {/* Trạng thái tóm tắt (chỉ đọc, không bấm được) */}
+        <span
+          className="alert-bar-ok"
+          title={soundOn ? 'Âm báo đang BẬT' : 'Âm báo đang TẮT'}
         >
-          {soundOn ? '🔊 Âm báo: BẬT' : '🔇 Âm báo: TẮT'}
-        </button>
-
-        {isNotificationSupported() && perm !== 'granted' && (
-          <button className="btn btn-alert btn-alert-cta" onClick={enableNotifications}>
-            🔔 Bật thông báo
-          </button>
-        )}
+          {soundOn ? '🔊 Âm báo' : '🔇 Âm báo'}
+        </span>
 
         {perm === 'granted' && (
           <span className="alert-bar-ok" title="Thông báo hệ thống đã được bật">
-            ✅ Thông báo: BẬT
+            ✅ Thông báo
           </span>
-        )}
-
-        {/* Permission đã bật nhưng chưa có push subscription -> hiện nút
-            đăng ký lại. Không có nút này thì chủ quán không có đường nào
-            để subscribe lại khi WebKit tự xoá subscription. */}
-        {perm === 'granted' && !pushed && (
-          <button className="btn btn-alert btn-alert-cta" onClick={enableNotifications}>
-            🔄 Đăng ký push
-          </button>
         )}
 
         {pushed && (
-          <span className="alert-bar-ok" title="Đã đăng ký Web Push — nhận được kể cả khi app đóng">
-            📲 Push: BẬT
+          <span
+            className="alert-bar-ok"
+            title="Đã đăng ký Web Push — nhận được kể cả khi app đóng"
+          >
+            📲 Push
           </span>
         )}
-
-        <button
-          className="btn btn-alert"
-          onClick={resyncPush}
-          title="Gửi lại subscription lên server (dùng sau khi deploy Edge Function)"
-        >
-          📲 Đồng bộ push
-        </button>
-
-        <button
-          className="btn btn-alert"
-          onClick={runPushDiagnostics}
-          title="Xem trạng thái push chi tiết (chụp màn hình gửi lại nếu chưa nhận được thông báo)"
-        >
-          🩺 Chẩn đoán push
-        </button>
-
-        <button
-          className="btn btn-alert"
-          onClick={resetPush}
-          title="Huỷ đăng ký push trên máy này rồi đăng ký lại (dùng khi bị kẹt do đổi VAPID key)"
-        >
-          🗑️ Đặt lại push
-        </button>
 
         {standalone && (
           <span className="alert-bar-ok" title="Đang chạy từ màn hình chính">
@@ -390,48 +375,132 @@ export default function AdminLayout() {
         <span className="alert-bar-tip">
           Đơn mới sẽ kêu + hiện thông báo dù bạn đang ở tab nào.
         </span>
+
+        {/* ---- Nút bánh răng: gom toàn bộ nút cài đặt thông báo ---- */}
+        <div className="kebab-wrap">
+          <button
+            className="btn btn-alert kebab-btn"
+            onClick={() => setMenuOpen((v) => !v)}
+            aria-haspopup="menu"
+            aria-expanded={menuOpen}
+            aria-label="Cài đặt thông báo"
+            title="Cài đặt thông báo"
+          >
+            ⋮
+          </button>
+
+          {menuOpen && (
+            <>
+              {/* Bấm ra ngoài để đóng menu */}
+              <div
+                className="kebab-backdrop"
+                onClick={() => setMenuOpen(false)}
+                aria-hidden="true"
+              />
+              <div className="kebab-menu" role="menu">
+                <button
+                  className="kebab-item"
+                  role="menuitem"
+                  onClick={toggleSound}
+                >
+                  <span>{soundOn ? '🔇 Tắt âm báo' : '🔊 Bật âm báo'}</span>
+                  <span className="kebab-item-note">
+                    {soundOn ? 'đang bật' : 'đang tắt'}
+                  </span>
+                </button>
+
+                {isNotificationSupported() && perm !== 'granted' && (
+                  <button
+                    className="kebab-item"
+                    role="menuitem"
+                    onClick={enableNotifications}
+                  >
+                    <span>🔔 Bật thông báo</span>
+                  </button>
+                )}
+
+                {/* Permission đã bật nhưng chưa có push subscription -> hiện nút
+                    đăng ký lại. Không có nút này thì chủ quán không có đường nào
+                    để subscribe lại khi WebKit tự xoá subscription. */}
+                {perm === 'granted' && !pushed && (
+                  <button
+                    className="kebab-item"
+                    role="menuitem"
+                    onClick={enableNotifications}
+                  >
+                    <span>🔄 Đăng ký push</span>
+                  </button>
+                )}
+
+                <button
+                  className="kebab-item"
+                  role="menuitem"
+                  onClick={resyncPush}
+                >
+                  <span>📲 Đồng bộ push</span>
+                </button>
+
+                <button
+                  className="kebab-item"
+                  role="menuitem"
+                  onClick={runPushDiagnostics}
+                >
+                  <span>🩺 Chẩn đoán push</span>
+                </button>
+
+                <button
+                  className="kebab-item kebab-item-danger"
+                  role="menuitem"
+                  onClick={resetPush}
+                >
+                  <span>🗑️ Đặt lại push</span>
+                </button>
+              </div>
+            </>
+          )}
+        </div>
       </div>
 
-      {/* ---- Kết quả chẩn đoán push (bấm "🩺 Chẩn đoán push") ---- */}
-      {diag && (
-        <div className="install-hint" role="note">
-          <div className="install-hint-title">🩺 Chẩn đoán thông báo</div>
-          <ul style={{ margin: '8px 0 0', paddingLeft: '18px', lineHeight: 1.7 }}>
-            <li>
-              Mở từ màn hình chính: <strong>{diag.standalone ? 'CÓ' : 'KHÔNG'}</strong>{' '}
-              {diag.standalone ? '' : '← phải mở app từ icon, không mở tab Safari'}
-            </li>
-            <li>
-              Service Worker: <strong>{diag.swSupported ? 'có' : 'KHÔNG'}</strong>
-              {diag.swScope ? ` (scope: ${diag.swScope})` : ''}
-              {diag.swState ? ` | worker: ${diag.swState}` : ''}
-              {diag.swController ? '' : ' ← chưa có controller, thử đóng/mở lại app'}
-            </li>
-            <li>
-              Quyền thông báo: <strong>{diag.permission}</strong>
-              {diag.permission === 'default' ? ' ← bấm "🔔 Bật thông báo"' : ''}
-              {diag.permission === 'denied' ? ' ← vào Cài đặt Safari để bật lại' : ''}
-            </li>
-            <li>
-              Web Push: <strong>{diag.pushSupported ? 'có' : 'KHÔNG hỗ trợ'}</strong> • VAPID key:{' '}
-              <strong>{diag.vapidKey ? 'có' : 'THIẾU'}</strong>
-            </li>
-            <li>
-              Subscription: <strong>{diag.hasSubscription ? 'ĐÃ CÓ' : 'CHƯA CÓ'}</strong>
-              {diag.endpointHost ? ` (${diag.endpointHost})` : ''}
-              {diag.hasSubscription ? '' : ' ← bấm "🔄 Đăng ký push"'}
-            </li>
-            <li>
-              Đã đồng bộ lên server: <strong>{diag.syncedLocally ? 'có' : 'chưa'}</strong>
-              {diag.syncedLocally ? '' : ' ← bấm "📲 Đồng bộ push"'}
-            </li>
-            {diag.error ? <li>Lỗi: {diag.error}</li> : null}
-            {diag.lastError ? (
-              <li style={{ color: '#b45309' }}>
-                <strong>Lỗi push gần nhất:</strong> {diag.lastError}
-              </li>
-            ) : null}
-          </ul>
+      {/* ---- MODAL kết quả / thông báo (có nút Đóng) ---- */}
+      {modal && (
+        <div
+          className="modal-backdrop"
+          onClick={() => setModal(null)}
+          role="presentation"
+        >
+          <div
+            className="modal modal-result"
+            role="dialog"
+            aria-modal="true"
+            aria-label={modal.title}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="modal-head">
+              <h2>{modal.title}</h2>
+              <button
+                className="btn-icon"
+                onClick={() => setModal(null)}
+                aria-label="Đóng"
+              >
+                ✕
+              </button>
+            </div>
+            <div className="modal-body">
+              <ul className="modal-result-list">
+                {modal.lines.map((line, i) => (
+                  <li key={i}>{line}</li>
+                ))}
+              </ul>
+            </div>
+            <div className="modal-foot">
+              <button
+                className="btn btn-primary"
+                onClick={() => setModal(null)}
+              >
+                Đóng
+              </button>
+            </div>
+          </div>
         </div>
       )}
 

@@ -3,6 +3,7 @@ import { flushSync } from 'react-dom'
 import { listOrders, updateOrderStatus, updateOrderPayment, expireStaleOrders } from '../lib/db.js'
 import { useOrdersRealtime } from '../lib/useOrdersRealtime.js'
 import { fmtVND, fmtTime, todayRange, startOfToday } from '../lib/format.js'
+import { sortByNameThenPrice } from '../lib/dishSort.js'
 import Invoice from '../components/Invoice.jsx'
 import PrintPortal from '../components/PrintPortal.jsx'
 import RowMenu from '../components/RowMenu.jsx'
@@ -238,7 +239,15 @@ export default function OrdersPage() {
         map.set(key, row)
       }
     }
-    return Array.from(map.values()).sort((a, b) => b.qty - a.qty)
+    // Sắp xếp:
+    //  1. Trong nhóm món CÙNG TÊN -> đơn giá tăng dần (vd "Xôi gà" nhỏ 30k
+    //     đứng trước "Xôi gà" to 40k).
+    //  2. Giữa các nhóm -> món nào cần làm nhiều nhất thì lên đầu.
+    return sortByNameThenPrice(
+      Array.from(map.values()),
+      (r) => Number(r.price) || 0,
+      (r) => Number(r.qty) || 0,
+    )
   }, [orders])
 
   const onTogglePaid = async (o) => {
@@ -433,6 +442,7 @@ export default function OrdersPage() {
 
                     <div className="muted small">
                       {fmtTime(o.created_at)}
+                      {o.pickup_time ? ` · 🕒 Nhận lúc ${fmtTime(o.pickup_time)}` : ''}
                       {o.table_no ? ` · Bàn ${o.table_no}` : ''}
                     </div>
                     {o.customer_address && (

@@ -1,11 +1,40 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
 import { listMenu, listAllItemOptions, createOrder, getCustomerByToken } from '../lib/db.js'
-import { fmtVND, uid } from '../lib/format.js'
+import { fmtVND, uid, dateKey } from '../lib/format.js'
 import DishAddModal from '../components/DishAddModal.jsx'
 import BankQr from '../components/BankQr.jsx'
 
 const CART_KEY = 'quan-an-sang:cart:v2'
+
+/**
+ * Khoá lưu token QR trong sessionStorage.
+ *
+ * VÌ SAO CẦN?
+ *   URL của QR là `#/?qr=<token>` — token nằm trong QUERY của hash route.
+ *   Khi khách đặt xong và bấm "Đặt đơn khác", app điều hướng tới
+ *   `#/dat-hang/thanh-cong` -> token biến mất khỏi URL -> quay lại trang
+ *   đặt món thì KHÔNG còn `?qr=` -> mất toàn bộ thông tin điền sẵn
+ *   (tên / SĐT / địa chỉ).
+ *
+ *   Lưu token vào sessionStorage giúp khôi phục lại khi quay về trang đặt
+ *   món. sessionStorage (không phải localStorage) vì token là "vé mời" của
+ *   riêng khách đó — đóng tab là hết, không lưu lâu trên máy.
+ */
+const QR_KEY = 'quan-an-sang:qr-token'
+
+/**
+ * Khoá lưu THÔNG TIN KHÁCH đã điền (tên / SĐT / địa chỉ / giờ nhận hàng).
+ *
+ *   Sau khi đặt xong, khách bấm "Đặt đơn khác" -> quay lại trang đặt món.
+ *   Form là state của component nên bị mount lại -> mất sạch thông tin đã
+ *   nhập (kể cả khi khách KHÔNG quét QR mà tự gõ tay).
+ *
+ *   Lưu vào sessionStorage -> lần sau mở lại trang đặt món, thông tin được
+ *   điền lại. Dùng sessionStorage (không phải localStorage) vì đây là dữ liệu
+ *   của phiên đặt hàng, đóng tab là hết.
+ */
+const CUSTOMER_INFO_KEY = 'quan-an-sang:customer-info'
 
 /**
  * Ngưỡng cảnh báo: TỔNG số món trong giỏ ĐẠT ngưỡng này thì hiện banner.
@@ -123,15 +152,54 @@ export default function OrderPage() {
   // ---- Khách quen đến từ QR ---------------------------------------
   // Token nằm trong query của HashRouter: `#/?qr=<token>`.
   // Khi có token hợp lệ -> lấy tên/SĐT/địa chỉ từ DB rồi điền sẵn vào form.
+  //
+  // KHÔI PHỤC TOKEN KHI QUAY LẠI TRANG:
+  //   Sau khi đặt xong, app điều hướng sang `#/dat-hang/thanh-cong` -> token
+  //   biến mất khỏi URL. Bấm "Đặt đơn khác" -> quay lại `#/` cũng không có
+  //   `?qr=` -> KHÁCH MẤT toàn bộ thông tin đã điền sẵn.
+  //
+  //   Vì vậy: token được ghi vào sessionStorage ngay khi đọc được từ URL,
+  //   và khi vào trang mà URL KHÔNG có `?qr=`, ta lấy lại token đã lưu và
+  //   ghi ngược vào URL (`setSearchParams`) để mọi thứ hoạt động như cũ.
   const [searchParams, setSearchParams] = useSearchParams()
   const qrToken = searchParams.get('qr') || ''
   const [customer, setCustomer] = useState(null)
   const [qrNotice, setQrNotice] = useState('')
+  // Đã tra cứu xong khách quen (thành công hoặc thất bại) chưa.
+  const [customerResolved, setCustomerResolved] = useState(false)
+
+  // Khôi phục token đã lưu khi URL không có `?qr=`.
+  // Chạy 1 lần khi mount (và mỗi khi token trong URL đổi).
+  useEffect(() => {
+    if (qrToken) {
+      try {
+        sessionStorage.setItem(QR_KEY, qrToken)
+      } catch {
+        /* bỏ qua (trình duyệt chặn storage) */
+      }
+      return
+    }
+    let saved = ''
+    try {
+      saved = sessionStorage.getItem(QR_KEY) || ''
+    } catch {
+      saved = ''
+    }
+    if (!saved) return
+    // Ghi lại vào URL để trạng thái "khách quen" nhất quán (và để copy link
+    // / F5 vẫn giữ được thông tin điền sẵn).
+    setSearchParams((prev) => {
+      const next = new URLSearchParams(prev)
+      next.set('qr', saved)
+      return next
+    }, { replace: true })
+  }, [qrToken, setSearchParams])
 
   useEffect(() => {
     if (!qrToken) {
       setCustomer(null)
       setQrNotice('')
+      setCustomerResolved(true)
       return
     }
     let alive = true
@@ -145,10 +213,12 @@ export default function OrderPage() {
           setCustomer(null)
           setQrNotice('Mã QR không hợp lệ hoặc đã hết hạn — bạn vui lòng nhập thông tin.')
         }
+        setCustomerResolved(true)
       })
       .catch(() => {
         if (!alive) return
         setQrNotice('Không kiểm tra được mã QR — bạn vui lòng nhập thông tin.')
+        setCustomerResolved(true)
       })
     return () => {
       alive = false
@@ -559,10 +629,19 @@ function CartBar({
   const [name, setName] = useState('')
   const [phone, setPhone] = useState('')
   const [address, setAddress] = useState('')
-  const [table, setTable] = useState('')
   const [note, setNote] = useState('')
   const [sending, setSending] = useState(false)
   const [err, setErr] = useState('')
+
+  /**
+   * Thời gian khách MUỐN NHẬN HÀNG (tuỳ chọn).
+   *
+   * Quán làm TAKE AWAY -> không có "số bàn". Thay vào đó khách có thể chỉ
+   * định giờ muốn nhận (vd "12:30"). Bỏ trống = nhận càng sớm càng tốt.
+   *
+   * Lưu dạng chuỗi "HH:MM" trong state, gửi lên server dạng ISO.
+   */
+  const [pickupTime, setPickupTime] = useState('')
 
   // Cách thanh toán: 'cash' (tiền mặt) | 'transfer' (chuyển khoản)
   const [paymentMethod, setPaymentMethod] = useState('cash')
@@ -585,6 +664,47 @@ function CartBar({
     setPhone((v) => v || customer.phone || '')
     setAddress((v) => v || customer.address || '')
   }, [customer])
+
+  /**
+   * Khôi phục thông tin khách đã nhập ở LẦN TRƯỚC (cùng phiên).
+   *
+   *   Không có cơ chế này thì: đặt xong -> "Đặt đơn khác" -> form được mount
+   *   lại -> các ô tên / SĐT / địa chỉ / giờ nhận hàng trống trơn, dù khách
+   *   KHÔNG quét QR mà gõ tay.
+   *
+   *   Ưu tiên: dữ liệu QR (đã prefill ở trên) > dữ liệu phiên cũ.
+   */
+  const restoredInfo = useRef(false)
+  useEffect(() => {
+    if (restoredInfo.current) return
+    if (!customerResolved) return // chờ tra cứu QR xong mới quyết định ưu tiên
+    restoredInfo.current = true
+    let saved = null
+    try {
+      const raw = sessionStorage.getItem(CUSTOMER_INFO_KEY)
+      if (raw) saved = JSON.parse(raw)
+    } catch {
+      saved = null
+    }
+    if (!saved || typeof saved !== 'object') return
+    setName((v) => v || saved.name || '')
+    setPhone((v) => v || saved.phone || '')
+    setAddress((v) => v || saved.address || '')
+    setPickupTime((v) => v || saved.pickupTime || '')
+  }, [customerResolved, customer])
+
+  // Lưu thông tin khách mỗi khi thay đổi -> giữ cho lần đặt hàng tiếp theo.
+  useEffect(() => {
+    if (!name && !phone && !address) return
+    try {
+      sessionStorage.setItem(
+        CUSTOMER_INFO_KEY,
+        JSON.stringify({ name, phone, address, pickupTime }),
+      )
+    } catch {
+      /* bỏ qua (trình duyệt chặn storage) */
+    }
+  }, [name, phone, address, pickupTime])
 
   // Đã đủ thông tin chưa? (tên + địa chỉ)
   const infoComplete = Boolean(name.trim() && address.trim())
@@ -610,12 +730,31 @@ function CartBar({
     setErr('')
     setSending(true)
     try {
+      // "HH:MM" -> ISO đầy đủ (giờ địa phương) để server lưu timestamptz.
+      // Nếu khách không chọn giờ -> null = "nhận càng sớm càng tốt".
+      //
+      // Nếu giờ đã chọn ĐÃ QUA trong ngày hôm nay (vd lúc 14:00 khách
+      // chọn 09:00) -> hiểu là khách muốn nhận 9:00 SÁNG MAI, chứ không phải
+      // một mốc thời gian nằm trong quá khứ.
+      let pickupIso = null
+      if (pickupTime) {
+        const base = new Date(`${dateKey(new Date())}T${pickupTime}:00`)
+        if (Number.isNaN(base.getTime())) {
+          pickupIso = null
+        } else if (base.getTime() <= Date.now()) {
+          base.setDate(base.getDate() + 1)
+          pickupIso = base.toISOString()
+        } else {
+          pickupIso = base.toISOString()
+        }
+      }
+
       const order = await createOrder({
         customer_name: name,
         customer_phone: phone,
         customer_address: address,
         customer_token: qrToken,
-        table_no: table,
+        pickup_time: pickupIso,
         note,
         payment_method: paymentMethod,
         items: cartItems.map((c) => ({
@@ -754,6 +893,7 @@ function CartBar({
                     {infoComplete ? (
                       <span className="info-head-summary">
                         {name} · {address}
+                        {pickupTime ? ` · nhận lúc ${pickupTime}` : ''}
                       </span>
                     ) : (
                       <span className="info-head-summary info-head-summary-warn">
@@ -797,8 +937,17 @@ function CartBar({
                       />
                     </div>
                     <div className="field">
-                      <label>Số bàn (nếu có)</label>
-                      <input value={table} onChange={(e) => setTable(e.target.value)} placeholder="Bàn 5" />
+                      <label>Thời gian muốn nhận hàng (tuỳ chọn)</label>
+                      <input
+                        type="time"
+                        value={pickupTime}
+                        onChange={(e) => setPickupTime(e.target.value)}
+                        placeholder="Bỏ trống = nhận càng sớm càng tốt"
+                      />
+                      <div className="muted small">
+                        Quán làm take away — bạn muốn nhận món lúc mấy giờ? Bỏ trống nếu muốn nhận
+                        sớm nhất có thể.
+                      </div>
                     </div>
                   </div>
                 )}

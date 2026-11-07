@@ -1,4 +1,4 @@
-import { fmtVND, fmtDateTime } from '../lib/format.js'
+import { fmtVND, fmtDateTime, fmtTime } from '../lib/format.js'
 
 const SHOP = {
   name: import.meta.env.VITE_SHOP_NAME || 'Quán Ăn Sáng',
@@ -33,6 +33,9 @@ export default function Invoice({ order }) {
         {order.customer_phone && <div className="inv-small">SĐT: {order.customer_phone}</div>}
         {order.customer_address && (
           <div className="inv-small">Giao tại: {order.customer_address}</div>
+        )}
+        {order.pickup_time && (
+          <div className="inv-small">Nhận lúc: {fmtTime(order.pickup_time)}</div>
         )}
         {order.table_no && <div className="inv-small">Bàn: {order.table_no}</div>}
 
